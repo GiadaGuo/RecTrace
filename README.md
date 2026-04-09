@@ -26,6 +26,14 @@ Mock脚本(Python)  →  Kafka(ods_user_behavior)  →  Flink Job1(维度拼接/
 
 ---
 
+## 脚本快速启动/关闭
+```bash
+# 启动容器-初始化维表-提交job（生产者数据要手动开启）
+bash scripts/restart.sh
+# 关停容器
+bash scripts/stop.sh
+```
+
 ## 启动步骤
 
 ### 第一步：启动基础设施
