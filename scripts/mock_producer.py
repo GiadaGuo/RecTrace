@@ -28,7 +28,7 @@ import sys
 from kafka import KafkaProducer
 
 # ── Config ───────────────────────────────────────────────────────────────────
-KAFKA_BOOTSTRAP  = "localhost:9092"
+KAFKA_BOOTSTRAP  = "localhost:19092"
 TOPIC            = "ods_user_behavior"
 
 NUM_USERS        = 1000

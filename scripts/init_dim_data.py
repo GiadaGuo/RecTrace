@@ -22,6 +22,7 @@ from faker import Faker
 SQLITE_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "dim.db")
 REDIS_HOST  = "localhost"
 REDIS_PORT  = 6379
+KAFKA_BOOTSTRAP = "localhost:19092"  # 宿主机访问 Kafka 用此地址
 
 NUM_USERS   = 1000
 NUM_ITEMS   = 5000

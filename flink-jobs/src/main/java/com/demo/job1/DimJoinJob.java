@@ -51,7 +51,7 @@ public class DimJoinJob {
 
         // Enable checkpointing every 30s for fault tolerance
         env.enableCheckpointing(30_000);
-        env.setParallelism(2);
+        env.setParallelism(1);
 
         // ── Source ────────────────────────────────────────────────────────────
         KafkaSource<UserBehavior> source = KafkaSource.<UserBehavior>builder()

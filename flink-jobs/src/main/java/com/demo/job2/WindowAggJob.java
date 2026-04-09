@@ -41,7 +41,7 @@ public class WindowAggJob {
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.enableCheckpointing(30_000);
-        env.setParallelism(2);
+        env.setParallelism(1);
 
         // ── Source ─────────────────────────────────────────────────────────
         KafkaSource<BehaviorWithDim> source = KafkaSource.<BehaviorWithDim>builder()
