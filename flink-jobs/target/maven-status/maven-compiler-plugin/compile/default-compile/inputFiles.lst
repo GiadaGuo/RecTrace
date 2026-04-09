@@ -1,0 +1,10 @@
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/config/KafkaConfig.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/BehaviorWithDim.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/ItemFeature.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/UserBehavior.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/UserFeature.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/UserItemFeature.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/serde/JsonSchema.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job1/DimJoinJob.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job2/WindowAggJob.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job3/RealtimeFeatureJob.java
