@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Raw user behavior event from Kafka topic: ods_user_behavior
+ *
+ * Behavior funnel for recommendation tracing:
+ *   show -> click -> cart/fav -> buy
  */
 public class UserBehavior {
 
@@ -16,7 +19,7 @@ public class UserBehavior {
     @JsonProperty("category_id")
     public int categoryId;
 
-    /** pv | cart | fav | buy */
+    /** show | click | cart | fav | buy */
     @JsonProperty("behavior")
     public String behavior;
 
@@ -24,20 +27,39 @@ public class UserBehavior {
     @JsonProperty("timestamp")
     public long timestamp;
 
-    public UserBehavior() {}
+    // ── Recommendation tracing fields ────────────────────────────────────────
 
-    public UserBehavior(String userId, String itemId, int categoryId, String behavior, long timestamp) {
-        this.userId     = userId;
-        this.itemId     = itemId;
-        this.categoryId = categoryId;
-        this.behavior   = behavior;
-        this.timestamp  = timestamp;
-    }
+    /** Session ID: {user_id}_{session_start_ts}, links all behaviors in one visit */
+    @JsonProperty("session_id")
+    public String sessionId;
+
+    /**
+     * Recommendation request ID: req_{8-char-uuid}.
+     * One req_id maps to multiple show events (the recommendation list).
+     * Used to trace which recommendation results led to clicks/purchases.
+     */
+    @JsonProperty("req_id")
+    public String reqId;
+
+    /** Traffic source: recommend | search | direct | ad */
+    @JsonProperty("rec_source")
+    public String recSource;
+
+    /**
+     * Position of the item in the recommendation list (1-based).
+     * Only meaningful for show events; 0 for other behaviors.
+     * Used to analyze position bias in CTR.
+     */
+    @JsonProperty("position")
+    public int position;
+
+    public UserBehavior() {}
 
     @Override
     public String toString() {
         return "UserBehavior{userId='" + userId + "', itemId='" + itemId +
-               "', categoryId=" + categoryId + ", behavior='" + behavior +
-               "', timestamp=" + timestamp + "}";
+               "', behavior='" + behavior + "', sessionId='" + sessionId +
+               "', recSource='" + recSource + "', position=" + position +
+               ", timestamp=" + timestamp + "}";
     }
 }

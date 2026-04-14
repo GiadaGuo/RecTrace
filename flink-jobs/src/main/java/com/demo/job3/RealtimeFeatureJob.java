@@ -60,7 +60,7 @@ public class RealtimeFeatureJob {
                 .setBootstrapServers(KafkaConfig.BOOTSTRAP_SERVERS)
                 .setTopics(KafkaConfig.TOPIC_DWD_BEHAVIOR_WITH_DIM)
                 .setGroupId(KafkaConfig.GROUP_JOB3)
-                .setStartingOffsets(OffsetsInitializer.earliest())
+                .setStartingOffsets(OffsetsInitializer.committedOffsets(org.apache.kafka.clients.consumer.OffsetResetStrategy.LATEST))
                 .setValueOnlyDeserializer(new JsonSchema.Deserializer<>(BehaviorWithDim.class))
                 .build();
 

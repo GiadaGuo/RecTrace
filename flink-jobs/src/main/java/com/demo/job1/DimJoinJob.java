@@ -58,14 +58,15 @@ public class DimJoinJob {
                 .setBootstrapServers(KafkaConfig.BOOTSTRAP_SERVERS)
                 .setTopics(KafkaConfig.TOPIC_ODS_USER_BEHAVIOR)
                 .setGroupId(KafkaConfig.GROUP_JOB1)
-                .setStartingOffsets(OffsetsInitializer.earliest())
+                .setStartingOffsets(OffsetsInitializer.committedOffsets(org.apache.kafka.clients.consumer.OffsetResetStrategy.LATEST))
                 .setValueOnlyDeserializer(new JsonSchema.Deserializer<>(UserBehavior.class))
                 .build();
 
         DataStream<UserBehavior> behaviorStream = env.fromSource(
                 source,
-                WatermarkStrategy.<UserBehavior>forBoundedOutOfOrderness(Duration.ofSeconds(5))
-                        .withTimestampAssigner((event, ts) -> event.timestamp),
+                // // WatermarkStrategy.<UserBehavior>forBoundedOutOfOrderness(Duration.ofSeconds(5))
+                //         .withTimestampAssigner((event, ts) -> event.timestamp),
+                WatermarkStrategy.noWatermarks(),
                 "KafkaSource-ods_user_behavior"
         );
 
@@ -73,7 +74,10 @@ public class DimJoinJob {
         DataStream<BehaviorWithDim> enrichedStream = AsyncDataStream.unorderedWait(
                 behaviorStream,
                 new RedisDimAsyncFunction(),
-                5000,   // timeout ms
+                // [EXPERIMENT-2] 制造超时：将 timeout 从 5000ms 改为 100ms，让正常 Redis 也超时
+                // 恢复正常：改回 5000
+                100,   // timeout ms（正常值：5000 | 场景二测试值：100）
+                // [/EXPERIMENT-2]
                 java.util.concurrent.TimeUnit.MILLISECONDS,
                 100     // max concurrent async requests
         );
@@ -128,6 +132,11 @@ public class DimJoinJob {
                 result.categoryId = input.categoryId;
                 result.behavior   = input.behavior;
                 result.timestamp  = input.timestamp;
+                // Pass-through recommendation tracing fields
+                result.sessionId  = input.sessionId;
+                result.reqId      = input.reqId;
+                result.recSource  = input.recSource;
+                result.position   = input.position;
 
                 try (Jedis jedis = jedisPool.getResource()) {
                     // Fetch user dimension
@@ -163,6 +172,10 @@ public class DimJoinJob {
                     fallback.categoryId = input.categoryId;
                     fallback.behavior   = input.behavior;
                     fallback.timestamp  = input.timestamp;
+                    fallback.sessionId  = input.sessionId;
+                    fallback.reqId      = input.reqId;
+                    fallback.recSource  = input.recSource;
+                    fallback.position   = input.position;
                     fallback.userAge    = 0;
                     fallback.userCity   = "unknown";
                     fallback.userLevel  = 1;
@@ -178,7 +191,12 @@ public class DimJoinJob {
         @Override
         public void timeout(UserBehavior input, ResultFuture<BehaviorWithDim> resultFuture) {
             LOG.warn("[Job1] Async timeout for userId={}, itemId={}", input.userId, input.itemId);
-            resultFuture.complete(Collections.emptyList());
+            // [EXPERIMENT-2] 修复前：超时时直接丢弃事件（emptyList），导致下游消息数少于上游
+            // resultFuture.complete(Collections.emptyList());  // 丢弃（问题版本）
+            // [EXPERIMENT-2] 修复后：超时时输出 fallback 维度数据，不丢弃事件
+            // 恢复问题：将下面的 buildFallback 改回 Collections.emptyList()
+            resultFuture.complete(Collections.singleton(buildFallback(input)));  // 不丢弃（修复版本）
+            // [/EXPERIMENT-2]
         }
 
         @Override
@@ -196,5 +214,26 @@ public class DimJoinJob {
             if (s == null) return defaultVal;
             try { return Double.parseDouble(s); } catch (NumberFormatException e) { return defaultVal; }
         }
+
+        // [EXPERIMENT-2] 构造 fallback 维度数据（Redis 超时时使用，保证事件不丢失）
+        private static BehaviorWithDim buildFallback(UserBehavior input) {
+            BehaviorWithDim f = new BehaviorWithDim();
+            f.userId     = input.userId;
+            f.itemId     = input.itemId;
+            f.categoryId = input.categoryId;
+            f.behavior   = input.behavior;
+            f.timestamp  = input.timestamp;
+            f.sessionId  = input.sessionId;
+            f.reqId      = input.reqId;
+            f.recSource  = input.recSource;
+            f.position   = input.position;
+            f.userAge    = 0;
+            f.userCity   = "unknown";
+            f.userLevel  = 1;
+            f.itemBrand  = "unknown";
+            f.itemPrice  = 0.0;
+            return f;
+        }
+        // [/EXPERIMENT-2]
     }
 }

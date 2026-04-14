@@ -24,6 +24,19 @@ public class BehaviorWithDim {
     @JsonProperty("timestamp")
     public long timestamp;
 
+    // ── Recommendation tracing fields (pass-through from UserBehavior) ───────
+    @JsonProperty("session_id")
+    public String sessionId;
+
+    @JsonProperty("req_id")
+    public String reqId;
+
+    @JsonProperty("rec_source")
+    public String recSource;
+
+    @JsonProperty("position")
+    public int position;
+
     // ── User dimension fields ────────────────────────────────────────────────
     @JsonProperty("user_age")
     public int userAge;
@@ -46,7 +59,8 @@ public class BehaviorWithDim {
     @Override
     public String toString() {
         return "BehaviorWithDim{userId='" + userId + "', itemId='" + itemId +
-               "', behavior='" + behavior + "', userCity='" + userCity +
-               "', itemBrand='" + itemBrand + "', itemPrice=" + itemPrice + "}";
+               "', behavior='" + behavior + "', recSource='" + recSource +
+               "', userCity='" + userCity + "', itemBrand='" + itemBrand +
+               "', itemPrice=" + itemPrice + "}";
     }
 }

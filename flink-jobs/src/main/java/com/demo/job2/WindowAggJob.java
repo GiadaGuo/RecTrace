@@ -13,12 +13,16 @@ import org.apache.flink.connector.kafka.sink.KafkaSink;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
 import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
+import org.apache.flink.util.OutputTag;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 
@@ -38,6 +42,12 @@ import java.time.Duration;
  */
 public class WindowAggJob {
 
+    private static final Logger LOG = LoggerFactory.getLogger(WindowAggJob.class);
+
+    // [EXPERIMENT-1] Side output tag for late records（场景一：收集被丢弃的迟到事件，方便统计数量）
+    static final OutputTag<BehaviorWithDim> LATE_TAG =
+            new OutputTag<BehaviorWithDim>("late-records") {};
+
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.enableCheckpointing(30_000);
@@ -48,7 +58,7 @@ public class WindowAggJob {
                 .setBootstrapServers(KafkaConfig.BOOTSTRAP_SERVERS)
                 .setTopics(KafkaConfig.TOPIC_DWD_BEHAVIOR_WITH_DIM)
                 .setGroupId(KafkaConfig.GROUP_JOB2)
-                .setStartingOffsets(OffsetsInitializer.earliest())
+                .setStartingOffsets(OffsetsInitializer.committedOffsets(org.apache.kafka.clients.consumer.OffsetResetStrategy.LATEST))
                 .setValueOnlyDeserializer(new JsonSchema.Deserializer<>(BehaviorWithDim.class))
                 .build();
 
@@ -60,11 +70,23 @@ public class WindowAggJob {
         );
 
         // ── Window aggregation ─────────────────────────────────────────────
-        DataStream<UserItemFeature> featureStream = stream
+        // [EXPERIMENT-1] sideOutputLateData 收集迟到事件（watermark 之后到达的事件）
+        // 恢复正常：去掉 .sideOutputLateData(LATE_TAG)，将 SingleOutputStreamOperator 改回 DataStream
+        SingleOutputStreamOperator<UserItemFeature> featureStream = stream
                 // Key by (user_id, category_id) composite key
                 .keyBy(e -> e.userId + "_" + e.categoryId)
                 .window(TumblingEventTimeWindows.of(Time.minutes(1)))
+                .sideOutputLateData(LATE_TAG)   // [EXPERIMENT-1] 捕获迟到事件
                 .aggregate(new BehaviorAggregator(), new WindowResultFunction());
+
+        // [EXPERIMENT-1] 打印迟到事件数量到日志，用于验证修复效果
+        featureStream.getSideOutput(LATE_TAG)
+                .map(e -> e)
+                .name("LateRecordsMonitor")
+                .addSink(new org.apache.flink.streaming.api.functions.sink.DiscardingSink<>())
+                .name("LateRecordsSink-discard");
+        // getSideOutput 会在 TaskManager 日志里触发 numLateRecordsDropped 指标
+        // [/EXPERIMENT-1]
 
         // ── Sink ───────────────────────────────────────────────────────────
         KafkaSink<UserItemFeature> sink = KafkaSink.<UserItemFeature>builder()

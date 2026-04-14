@@ -10,6 +10,7 @@ com/demo/common/model/BehaviorWithDim.class
 com/demo/job3/RealtimeFeatureJob$ItemFeatureFunction.class
 com/demo/common/model/UserItemFeature.class
 com/demo/common/serde/JsonSchema.class
+com/demo/job2/WindowAggJob$1.class
 com/demo/job3/RealtimeFeatureJob$UserFeatureFunction.class
 com/demo/job2/WindowAggJob$BehaviorAggregator.class
 com/demo/common/model/ItemFeature.class
