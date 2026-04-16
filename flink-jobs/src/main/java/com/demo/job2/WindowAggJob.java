@@ -65,7 +65,7 @@ public class WindowAggJob {
         DataStream<BehaviorWithDim> stream = env.fromSource(
                 source,
                 WatermarkStrategy.<BehaviorWithDim>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                        .withTimestampAssigner((e, ts) -> e.timestamp),
+                        .withTimestampAssigner((e, ts) -> e.ts),
                 "KafkaSource-dwd_behavior_with_dim"
         );
 
@@ -74,7 +74,7 @@ public class WindowAggJob {
         // 恢复正常：去掉 .sideOutputLateData(LATE_TAG)，将 SingleOutputStreamOperator 改回 DataStream
         SingleOutputStreamOperator<UserItemFeature> featureStream = stream
                 // Key by (user_id, category_id) composite key
-                .keyBy(e -> e.userId + "_" + e.categoryId)
+                .keyBy(e -> e.uid + "_" + e.categoryId)
                 .window(TumblingEventTimeWindows.of(Time.minutes(1)))
                 .sideOutputLateData(LATE_TAG)   // [EXPERIMENT-1] 捕获迟到事件
                 .aggregate(new BehaviorAggregator(), new WindowResultFunction());
@@ -109,7 +109,7 @@ public class WindowAggJob {
     // ── Accumulator ──────────────────────────────────────────────────────────
     /** Intermediate accumulator holding raw counts */
     static class BehaviorAccumulator {
-        String userId;
+        String uid;
         int    categoryId;
         long   pvCount;
         long   cartCount;
@@ -128,15 +128,22 @@ public class WindowAggJob {
 
         @Override
         public BehaviorAccumulator add(BehaviorWithDim value, BehaviorAccumulator acc) {
-            if (acc.userId == null) {
-                acc.userId     = value.userId;
+            if (acc.uid == null) {
+                acc.uid        = value.uid;
                 acc.categoryId = value.categoryId;
             }
-            switch (value.behavior) {
-                case "pv":   acc.pvCount++;   break;
-                case "cart": acc.cartCount++; break;
-                case "fav":  acc.favCount++;  break;
-                case "buy":  acc.buyCount++;  break;
+            // bhv_type=click maps to pv; bhv_value carries cart/fav/buy
+            if ("click".equals(value.bhvType)) {
+                if (value.bhvValue == null) {
+                    acc.pvCount++;
+                } else {
+                    switch (value.bhvValue) {
+                        case "cart": acc.cartCount++; break;
+                        case "fav":  acc.favCount++;  break;
+                        case "buy":  acc.buyCount++;  break;
+                        default:     acc.pvCount++;   break;
+                    }
+                }
             }
             return acc;
         }
@@ -167,7 +174,7 @@ public class WindowAggJob {
             BehaviorAccumulator acc = elements.iterator().next();
 
             UserItemFeature feature = new UserItemFeature();
-            feature.userId         = acc.userId != null ? acc.userId : key.split("_")[0];
+            feature.userId         = acc.uid != null ? acc.uid : key.split("_")[0];
             feature.categoryId     = acc.categoryId;
             feature.windowStart    = ctx.window().getStart();
             feature.windowEnd      = ctx.window().getEnd();

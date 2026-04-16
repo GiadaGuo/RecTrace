@@ -67,13 +67,13 @@ public class RealtimeFeatureJob {
         DataStream<BehaviorWithDim> stream = env.fromSource(
                 source,
                 WatermarkStrategy.<BehaviorWithDim>forBoundedOutOfOrderness(Duration.ofSeconds(10))
-                        .withTimestampAssigner((e, ts) -> e.timestamp),
+                        .withTimestampAssigner((e, ts) -> e.ts),
                 "KafkaSource-dwd_behavior_with_dim_job3"
         );
 
-        // ── User feature stream (keyed by userId) ──────────────────────────
+        // ── User feature stream (keyed by uid) ────────────────────────────────
         SingleOutputStreamOperator<UserFeature> userFeatureStream = stream
-                .keyBy(e -> e.userId)
+                .keyBy(e -> e.uid)
                 .process(new UserFeatureFunction());
 
         // ── Item feature stream (keyed by itemId, using side output) ────────
@@ -150,20 +150,29 @@ public class RealtimeFeatureJob {
         public void processElement(BehaviorWithDim e, Context ctx, Collector<UserFeature> out)
                 throws Exception {
 
-            // Update counters
-            switch (e.behavior) {
-                case "pv":   pvState.update(getOrDefault(pvState) + 1);     break;
-                case "cart": cartState.update(getOrDefault(cartState) + 1); break;
-                case "fav":  favState.update(getOrDefault(favState) + 1);   break;
-                case "buy":  buyState.update(getOrDefault(buyState) + 1);   break;
+            // Update counters based on new schema:
+            // bhv_type=click + bhv_value=null  -> pv (page view / click without action)
+            // bhv_type=click + bhv_value=cart  -> cart
+            // bhv_type=click + bhv_value=fav   -> fav
+            // bhv_type=click + bhv_value=buy   -> buy
+            if ("click".equals(e.bhvType)) {
+                if (e.bhvValue == null) {
+                    pvState.update(getOrDefault(pvState) + 1);
+                } else {
+                    switch (e.bhvValue) {
+                        case "cart": cartState.update(getOrDefault(cartState) + 1); break;
+                        case "fav":  favState.update(getOrDefault(favState) + 1);   break;
+                        case "buy":  buyState.update(getOrDefault(buyState) + 1);   break;
+                    }
+                }
             }
 
             // Update last active timestamp
-            lastTsState.update(e.timestamp);
+            lastTsState.update(e.ts);
 
             // Track active days (store YYYY-MM-DD as key, value=1)
             String day = LocalDate.ofInstant(
-                    java.time.Instant.ofEpochMilli(e.timestamp), ZoneId.of("Asia/Shanghai"))
+                    java.time.Instant.ofEpochMilli(e.ts), ZoneId.of("Asia/Shanghai"))
                     .toString();
             activeDaysState.put(day, 1L);
 
@@ -176,7 +185,7 @@ public class RealtimeFeatureJob {
 
             // Emit updated user feature
             UserFeature feature = new UserFeature();
-            feature.userId       = e.userId;
+            feature.userId       = e.uid;
             feature.userAge      = getIntOrDefault(ageState);
             feature.userCity     = cityState.value() != null ? cityState.value() : "unknown";
             feature.userLevel    = getIntOrDefault(levelState);
@@ -243,15 +252,20 @@ public class RealtimeFeatureJob {
         public void processElement(BehaviorWithDim e, Context ctx, Collector<ItemFeature> out)
                 throws Exception {
 
-            switch (e.behavior) {
-                case "pv":   pvState.update(getLong(pvState) + 1);     break;
-                case "buy":  buyState.update(getLong(buyState) + 1);   break;
-                case "cart": cartState.update(getLong(cartState) + 1); break;
-                case "fav":  favState.update(getLong(favState) + 1);   break;
+            if ("click".equals(e.bhvType)) {
+                if (e.bhvValue == null) {
+                    pvState.update(getLong(pvState) + 1);
+                } else {
+                    switch (e.bhvValue) {
+                        case "buy":  buyState.update(getLong(buyState) + 1);   break;
+                        case "cart": cartState.update(getLong(cartState) + 1); break;
+                        case "fav":  favState.update(getLong(favState) + 1);   break;
+                    }
+                }
             }
 
             // Track UV (unique visitors)
-            uvState.put(e.userId, 1L);
+            uvState.put(e.uid, 1L);
 
             // Latch item dimension
             if (brandState.value() == null || brandState.value().equals("unknown")) {

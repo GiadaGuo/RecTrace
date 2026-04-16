@@ -1,43 +1,47 @@
 package com.demo.common.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Behavior event enriched with user + item dimension data.
  * Output of Job1 -> Kafka topic: dwd_behavior_with_dim
+ *
+ * All new fields from UserBehavior (bhvPage, bhvSrc, bhvType, bhvValue, bhvExt)
+ * are passed through so downstream Jobs can route and filter by page / behavior type.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class BehaviorWithDim {
 
-    // ── Original fields ──────────────────────────────────────────────────────
-    @JsonProperty("user_id")
-    public String userId;
+    // ── Identity ──────────────────────────────────────────────────────────────
+    @JsonProperty("uid")
+    public String uid;
 
-    @JsonProperty("item_id")
-    public String itemId;
+    // ── Event classification (pass-through) ───────────────────────────────────
+    @JsonProperty("bhv_id")
+    public String bhvId;
 
-    @JsonProperty("category_id")
-    public int categoryId;
+    @JsonProperty("bhv_page")
+    public String bhvPage;
 
-    @JsonProperty("behavior")
-    public String behavior;
+    @JsonProperty("bhv_src")
+    public String bhvSrc;
 
-    @JsonProperty("timestamp")
-    public long timestamp;
+    @JsonProperty("bhv_type")
+    public String bhvType;
 
-    // ── Recommendation tracing fields (pass-through from UserBehavior) ───────
-    @JsonProperty("session_id")
-    public String sessionId;
+    @JsonProperty("bhv_value")
+    public String bhvValue;
 
-    @JsonProperty("req_id")
-    public String reqId;
+    // ── Timing ────────────────────────────────────────────────────────────────
+    @JsonProperty("ts")
+    public long ts;
 
-    @JsonProperty("rec_source")
-    public String recSource;
+    // ── Extension payload (pass-through) ─────────────────────────────────────
+    @JsonProperty("bhv_ext")
+    public BhvExt bhvExt;
 
-    @JsonProperty("position")
-    public int position;
-
-    // ── User dimension fields ────────────────────────────────────────────────
+    // ── User dimension fields (from Redis dim:user:{uid}) ─────────────────────
     @JsonProperty("user_age")
     public int userAge;
 
@@ -47,7 +51,15 @@ public class BehaviorWithDim {
     @JsonProperty("user_level")
     public int userLevel;
 
-    // ── Item dimension fields ────────────────────────────────────────────────
+    // ── Item dimension fields (from Redis dim:item:{item_id}) ─────────────────
+    // item_id is resolved from bhv_ext at join time; for show events the join
+    // is applied per item in the items list by downstream Jobs.
+    @JsonProperty("item_id")
+    public String itemId;
+
+    @JsonProperty("category_id")
+    public int categoryId;
+
     @JsonProperty("item_brand")
     public String itemBrand;
 
@@ -58,8 +70,9 @@ public class BehaviorWithDim {
 
     @Override
     public String toString() {
-        return "BehaviorWithDim{userId='" + userId + "', itemId='" + itemId +
-               "', behavior='" + behavior + "', recSource='" + recSource +
+        return "BehaviorWithDim{uid='" + uid + "', bhvPage='" + bhvPage +
+               "', bhvType='" + bhvType + "', bhvValue='" + bhvValue +
+               "', bhvSrc='" + bhvSrc + "', itemId='" + itemId +
                "', userCity='" + userCity + "', itemBrand='" + itemBrand +
                "', itemPrice=" + itemPrice + "}";
     }

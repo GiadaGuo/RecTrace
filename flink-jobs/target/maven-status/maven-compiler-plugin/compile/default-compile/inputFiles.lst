@@ -1,5 +1,6 @@
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/config/KafkaConfig.java
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/BehaviorWithDim.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/BhvExt.java
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/ItemFeature.java
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/UserBehavior.java
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/common/model/UserFeature.java

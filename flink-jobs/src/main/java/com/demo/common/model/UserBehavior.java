@@ -1,65 +1,100 @@
 package com.demo.common.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * Raw user behavior event from Kafka topic: ods_user_behavior
  *
- * Behavior funnel for recommendation tracing:
- *   show -> click -> cart/fav -> buy
+ * Supports three page scenarios:
+ *   home  – homepage recommendation exposure and click
+ *   search – search result page exposure, click, and query capture
+ *   pdp    – product detail page actions (fav / cart / buy)
+ *
+ * All events share the public fields below. Page-specific data lives in bhv_ext.
+ * Unknown fields are ignored so old and new formats coexist safely.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class UserBehavior {
 
-    @JsonProperty("user_id")
-    public String userId;
+    // ── Identity ──────────────────────────────────────────────────────────────
 
-    @JsonProperty("item_id")
-    public String itemId;
+    /** User ID, format U{6-digit}, e.g. U000001 */
+    @JsonProperty("uid")
+    public String uid;
 
-    @JsonProperty("category_id")
-    public int categoryId;
+    /** Log ID for deduplication, format log_{uuid-prefix} */
+    @JsonProperty("logid")
+    public String logId;
 
-    /** show | click | cart | fav | buy */
-    @JsonProperty("behavior")
-    public String behavior;
+    // ── Event classification ──────────────────────────────────────────────────
+
+    /**
+     * Behavior point ID. Used for first-level routing (what type of interaction).
+     *   1001 – exposure (show)
+     *   2001 – click
+     *   3001 – pdp action (fav / cart / buy determined by bhv_value)
+     */
+    @JsonProperty("bhv_id")
+    public String bhvId;
+
+    /**
+     * Page where the behavior occurred.
+     * Enum: home | search | pdp
+     * Used for second-level routing after bhv_id.
+     */
+    @JsonProperty("bhv_page")
+    public String bhvPage;
+
+    /**
+     * Traffic source / referrer page.
+     * Enum: direct | home | search
+     * PDP events carry the page that the user came from (pass-through from frontend).
+     */
+    @JsonProperty("bhv_src")
+    public String bhvSrc;
+
+    /**
+     * Behavior type. Simplified to two values:
+     *   show  – item exposure
+     *   click – any click-type interaction (including pdp actions)
+     */
+    @JsonProperty("bhv_type")
+    public String bhvType;
+
+    /**
+     * Behavior value. Null for pure clicks; set for pdp actions.
+     * Enum: null | fav | cart | buy
+     */
+    @JsonProperty("bhv_value")
+    public String bhvValue;
+
+    // ── Session ───────────────────────────────────────────────────────────────
 
     /** Unix timestamp in milliseconds */
-    @JsonProperty("timestamp")
-    public long timestamp;
+    @JsonProperty("ts")
+    public long ts;
 
-    // ── Recommendation tracing fields ────────────────────────────────────────
-
-    /** Session ID: {user_id}_{session_start_ts}, links all behaviors in one visit */
-    @JsonProperty("session_id")
-    public String sessionId;
+    // ── Extension fields (page-specific payload) ──────────────────────────────
 
     /**
-     * Recommendation request ID: req_{8-char-uuid}.
-     * One req_id maps to multiple show events (the recommendation list).
-     * Used to trace which recommendation results led to clicks/purchases.
+     * Extension object. Contents vary by page and bhv_type:
+     *   home show  : req_id + items[]
+     *   home click : req_id + item_id + position
+     *   search show : req_id + query + items[]
+     *   search click: req_id + query + item_id + position
+     *   pdp *       : item_id + req_id
      */
-    @JsonProperty("req_id")
-    public String reqId;
-
-    /** Traffic source: recommend | search | direct | ad */
-    @JsonProperty("rec_source")
-    public String recSource;
-
-    /**
-     * Position of the item in the recommendation list (1-based).
-     * Only meaningful for show events; 0 for other behaviors.
-     * Used to analyze position bias in CTR.
-     */
-    @JsonProperty("position")
-    public int position;
+    @JsonProperty("bhv_ext")
+    public BhvExt bhvExt;
 
     public UserBehavior() {}
 
     @Override
     public String toString() {
-        return "UserBehavior{userId='" + userId + "', itemId='" + itemId +
-               "', behavior='" + behavior + "', sessionId='" + sessionId +
-               "', recSource='" + recSource + "', position=" + position +
-               ", timestamp=" + timestamp + "}";
+        return "UserBehavior{uid='" + uid + "', bhvId='" + bhvId +
+               "', bhvPage='" + bhvPage + "', bhvType='" + bhvType +
+               "', bhvValue='" + bhvValue + "', bhvSrc='" + bhvSrc +
+               "', ts=" + ts + ", bhvExt=" + bhvExt + "}";
     }
 }

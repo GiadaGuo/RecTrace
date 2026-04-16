@@ -2,10 +2,10 @@ package com.demo.job1;
 
 import com.demo.common.config.KafkaConfig;
 import com.demo.common.model.BehaviorWithDim;
+import com.demo.common.model.BhvExt;
 import com.demo.common.model.UserBehavior;
 import com.demo.common.serde.JsonSchema;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.base.DeliveryGuarantee;
 import org.apache.flink.connector.kafka.sink.KafkaRecordSerializationSchema;
@@ -23,8 +23,8 @@ import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 
-import java.time.Duration;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -34,10 +34,10 @@ import java.util.concurrent.Executors;
  * Job1: Dimension Join via AsyncIO + Redis
  * -----------------------------------------
  * Source : ods_user_behavior
- * Process: For each event, asynchronously look up user + item dimension from Redis
+ * Process: For each event, asynchronously look up user + item dimension from Redis.
+ *          For show events the primary item_id is taken from bhv_ext.items[0] if present,
+ *          otherwise from bhv_ext.itemId. Click / pdp events use bhv_ext.itemId directly.
  * Sink   : dwd_behavior_with_dim
- *
- * Learning focus: Flink AsyncDataStream, JedisPool management via RichFunction
  *
  * Submit:
  *   flink run -c com.demo.job1.DimJoinJob flink-jobs/target/flink-jobs-1.0-SNAPSHOT.jar
@@ -49,7 +49,6 @@ public class DimJoinJob {
     public static void main(String[] args) throws Exception {
         final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 
-        // Enable checkpointing every 30s for fault tolerance
         env.enableCheckpointing(30_000);
         env.setParallelism(1);
 
@@ -64,8 +63,6 @@ public class DimJoinJob {
 
         DataStream<UserBehavior> behaviorStream = env.fromSource(
                 source,
-                // // WatermarkStrategy.<UserBehavior>forBoundedOutOfOrderness(Duration.ofSeconds(5))
-                //         .withTimestampAssigner((event, ts) -> event.timestamp),
                 WatermarkStrategy.noWatermarks(),
                 "KafkaSource-ods_user_behavior"
         );
@@ -74,12 +71,9 @@ public class DimJoinJob {
         DataStream<BehaviorWithDim> enrichedStream = AsyncDataStream.unorderedWait(
                 behaviorStream,
                 new RedisDimAsyncFunction(),
-                // [EXPERIMENT-2] 制造超时：将 timeout 从 5000ms 改为 100ms，让正常 Redis 也超时
-                // 恢复正常：改回 5000
-                100,   // timeout ms（正常值：5000 | 场景二测试值：100）
-                // [/EXPERIMENT-2]
+                5000,  // timeout ms
                 java.util.concurrent.TimeUnit.MILLISECONDS,
-                100     // max concurrent async requests
+                100    // max concurrent async requests
         );
 
         // ── Sink ──────────────────────────────────────────────────────────────
@@ -88,7 +82,7 @@ public class DimJoinJob {
                 .setRecordSerializer(
                         KafkaRecordSerializationSchema.<BehaviorWithDim>builder()
                                 .setTopic(KafkaConfig.TOPIC_DWD_BEHAVIOR_WITH_DIM)
-                                .setKeySerializationSchema(r -> r.userId.getBytes())
+                                .setKeySerializationSchema(r -> r.uid != null ? r.uid.getBytes() : new byte[0])
                                 .setValueSerializationSchema(new JsonSchema.Serializer<>(BehaviorWithDim.class))
                                 .build()
                 )
@@ -102,7 +96,9 @@ public class DimJoinJob {
 
     // ── Async Function ────────────────────────────────────────────────────────
     /**
-     * Asynchronously fetches user and item dimension data from Redis using a thread pool.
+     * Asynchronously fetches user and item dimension data from Redis.
+     * Item dimension is resolved from bhv_ext: for click/pdp events uses itemId directly;
+     * for show events uses the first item in the items list (representative lookup).
      * JedisPool is created once per task (in open()) and closed in close().
      */
     static class RedisDimAsyncFunction extends RichAsyncFunction<UserBehavior, BehaviorWithDim> {
@@ -126,21 +122,18 @@ public class DimJoinJob {
         @Override
         public void asyncInvoke(UserBehavior input, ResultFuture<BehaviorWithDim> resultFuture) {
             CompletableFuture.supplyAsync(() -> {
-                BehaviorWithDim result = new BehaviorWithDim();
-                result.userId     = input.userId;
-                result.itemId     = input.itemId;
-                result.categoryId = input.categoryId;
-                result.behavior   = input.behavior;
-                result.timestamp  = input.timestamp;
-                // Pass-through recommendation tracing fields
-                result.sessionId  = input.sessionId;
-                result.reqId      = input.reqId;
-                result.recSource  = input.recSource;
-                result.position   = input.position;
+                BehaviorWithDim result = buildBase(input);
+
+                // Resolve the representative item_id for dimension lookup
+                String lookupItemId = resolveItemId(input);
+                result.itemId = lookupItemId;
+                if (lookupItemId != null) {
+                    result.categoryId = resolveCategoryId(lookupItemId);
+                }
 
                 try (Jedis jedis = jedisPool.getResource()) {
                     // Fetch user dimension
-                    Map<String, String> userDim = jedis.hgetAll("dim:user:" + input.userId);
+                    Map<String, String> userDim = jedis.hgetAll("dim:user:" + input.uid);
                     if (userDim != null && !userDim.isEmpty()) {
                         result.userAge   = parseIntSafe(userDim.get("age"), 0);
                         result.userCity  = userDim.getOrDefault("city", "unknown");
@@ -152,36 +145,22 @@ public class DimJoinJob {
                     }
 
                     // Fetch item dimension
-                    Map<String, String> itemDim = jedis.hgetAll("dim:item:" + input.itemId);
-                    if (itemDim != null && !itemDim.isEmpty()) {
-                        result.itemBrand = itemDim.getOrDefault("brand", "unknown");
-                        result.itemPrice = parseDoubleSafe(itemDim.get("price"), 0.0);
-                    } else {
-                        result.itemBrand = "unknown";
-                        result.itemPrice = 0.0;
+                    if (lookupItemId != null) {
+                        Map<String, String> itemDim = jedis.hgetAll("dim:item:" + lookupItemId);
+                        if (itemDim != null && !itemDim.isEmpty()) {
+                            result.itemBrand = itemDim.getOrDefault("brand", "unknown");
+                            result.itemPrice = parseDoubleSafe(itemDim.get("price"), 0.0);
+                        } else {
+                            result.itemBrand = "unknown";
+                            result.itemPrice = 0.0;
+                        }
                     }
                 }
                 return result;
             }, executor).whenComplete((res, ex) -> {
                 if (ex != null) {
-                    LOG.warn("[Job1] Redis lookup failed for userId={}: {}", input.userId, ex.getMessage());
-                    // Emit event without dim data rather than dropping it
-                    BehaviorWithDim fallback = new BehaviorWithDim();
-                    fallback.userId     = input.userId;
-                    fallback.itemId     = input.itemId;
-                    fallback.categoryId = input.categoryId;
-                    fallback.behavior   = input.behavior;
-                    fallback.timestamp  = input.timestamp;
-                    fallback.sessionId  = input.sessionId;
-                    fallback.reqId      = input.reqId;
-                    fallback.recSource  = input.recSource;
-                    fallback.position   = input.position;
-                    fallback.userAge    = 0;
-                    fallback.userCity   = "unknown";
-                    fallback.userLevel  = 1;
-                    fallback.itemBrand  = "unknown";
-                    fallback.itemPrice  = 0.0;
-                    resultFuture.complete(Collections.singleton(fallback));
+                    LOG.warn("[Job1] Redis lookup failed for uid={}: {}", input.uid, ex.getMessage());
+                    resultFuture.complete(Collections.singleton(buildFallback(input)));
                 } else {
                     resultFuture.complete(Collections.singleton(res));
                 }
@@ -190,19 +169,67 @@ public class DimJoinJob {
 
         @Override
         public void timeout(UserBehavior input, ResultFuture<BehaviorWithDim> resultFuture) {
-            LOG.warn("[Job1] Async timeout for userId={}, itemId={}", input.userId, input.itemId);
-            // [EXPERIMENT-2] 修复前：超时时直接丢弃事件（emptyList），导致下游消息数少于上游
-            // resultFuture.complete(Collections.emptyList());  // 丢弃（问题版本）
-            // [EXPERIMENT-2] 修复后：超时时输出 fallback 维度数据，不丢弃事件
-            // 恢复问题：将下面的 buildFallback 改回 Collections.emptyList()
-            resultFuture.complete(Collections.singleton(buildFallback(input)));  // 不丢弃（修复版本）
-            // [/EXPERIMENT-2]
+            LOG.warn("[Job1] Async timeout for uid={}", input.uid);
+            // Emit fallback rather than dropping the event
+            resultFuture.complete(Collections.singleton(buildFallback(input)));
         }
 
         @Override
         public void close() {
             if (executor != null)  executor.shutdown();
             if (jedisPool != null) jedisPool.close();
+        }
+
+        // ── Helpers ───────────────────────────────────────────────────────────
+
+        /** Resolve the item_id to use for dimension lookup from bhv_ext. */
+        private static String resolveItemId(UserBehavior input) {
+            BhvExt ext = input.bhvExt;
+            if (ext == null) return null;
+            // click / pdp events carry a single item_id
+            if (ext.itemId != null && !ext.itemId.isEmpty()) return ext.itemId;
+            // show events carry an items list; use first entry for dim lookup
+            List<BhvExt.ExposureItem> items = ext.items;
+            if (items != null && !items.isEmpty()) return items.get(0).itemId;
+            return null;
+        }
+
+        /** Derive category_id from item_id format I{7-digit}. */
+        private static int resolveCategoryId(String itemId) {
+            if (itemId == null || itemId.length() < 2) return 0;
+            try {
+                int idx = Integer.parseInt(itemId.substring(1)) - 1;
+                return (idx % 50) + 1;
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+
+        /** Build the base BehaviorWithDim with all pass-through fields set. */
+        private static BehaviorWithDim buildBase(UserBehavior input) {
+            BehaviorWithDim r = new BehaviorWithDim();
+            r.uid       = input.uid;
+            r.bhvId     = input.bhvId;
+            r.bhvPage   = input.bhvPage;
+            r.bhvSrc    = input.bhvSrc;
+            r.bhvType   = input.bhvType;
+            r.bhvValue  = input.bhvValue;
+            r.ts        = input.ts;
+            r.bhvExt    = input.bhvExt;
+            return r;
+        }
+
+        /** Build fallback record with empty dimension data. Event is never dropped. */
+        private static BehaviorWithDim buildFallback(UserBehavior input) {
+            BehaviorWithDim f = buildBase(input);
+            f.itemId     = resolveItemId(input);
+            f.categoryId = f.itemId != null ? resolveCategoryId(f.itemId) : 0;
+            f.userAge    = 0;
+            f.userCity   = "unknown";
+            f.userLevel  = 1;
+            f.itemBrand  = "unknown";
+            f.itemPrice  = 0.0;
+            return f;
         }
 
         private static int parseIntSafe(String s, int defaultVal) {
@@ -214,26 +241,5 @@ public class DimJoinJob {
             if (s == null) return defaultVal;
             try { return Double.parseDouble(s); } catch (NumberFormatException e) { return defaultVal; }
         }
-
-        // [EXPERIMENT-2] 构造 fallback 维度数据（Redis 超时时使用，保证事件不丢失）
-        private static BehaviorWithDim buildFallback(UserBehavior input) {
-            BehaviorWithDim f = new BehaviorWithDim();
-            f.userId     = input.userId;
-            f.itemId     = input.itemId;
-            f.categoryId = input.categoryId;
-            f.behavior   = input.behavior;
-            f.timestamp  = input.timestamp;
-            f.sessionId  = input.sessionId;
-            f.reqId      = input.reqId;
-            f.recSource  = input.recSource;
-            f.position   = input.position;
-            f.userAge    = 0;
-            f.userCity   = "unknown";
-            f.userLevel  = 1;
-            f.itemBrand  = "unknown";
-            f.itemPrice  = 0.0;
-            return f;
-        }
-        // [/EXPERIMENT-2]
     }
 }
