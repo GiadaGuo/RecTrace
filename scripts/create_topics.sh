@@ -13,6 +13,7 @@ TOPICS=(
   "dws_user_item_feature"
   "dws_user_feature"
   "dws_item_feature"
+  "dws_user_seq_feature"
 )
 
 for TOPIC in "${TOPICS[@]}"; do

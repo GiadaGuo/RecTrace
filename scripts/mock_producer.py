@@ -20,7 +20,7 @@ Routing design (single Kafka topic):
   (home/search/pdp) to handle page-specific logic.
 
 Features:
-  - Session model with causally linked events (show -> click -> pdp -> fav/cart/buy)
+  - Causally linked events within a session (show -> click -> pdp -> fav/cart/buy)
   - Power-law item popularity (Zipf exponent=1.2: top 20% items ~80% traffic)
   - Power-law user activity  (Zipf exponent=0.8: top 10% users ~60% traffic)
   - Hourly traffic multiplier: morning/noon/evening peaks
@@ -126,12 +126,13 @@ def pick_items(n: int) -> list:
 def pick_query() -> str:
     return random.choices(QUERY_POOL, weights=QUERY_WEIGHTS, k=1)[0]
 
-def make_ev(uid: str, session_id: str, bhv_id: str, bhv_page: str,
+def make_ev(uid: str, bhv_id: str, bhv_page: str,
             bhv_src: str, bhv_type: str, bhv_value: str, bhv_ext: dict,
-            ts: int) -> dict:
+            ts: int, req_id: str = None) -> dict:
     return {
         "uid":       uid,
         "logid":     new_log_id(),
+        "req_id":    req_id,
         "bhv_id":    bhv_id,
         "bhv_page":  bhv_page,
         "bhv_src":   bhv_src,
@@ -155,7 +156,6 @@ def make_home_session(session_ts: int) -> list:
       4. PDP may lead to fav / cart / buy (bhv_id=3001)
     """
     uid        = random.choices(USER_IDS, weights=USER_WEIGHTS, k=1)[0]
-    session_id = f"{uid}_{session_ts}"
     req_id     = new_req_id()
     ts         = session_ts
 
@@ -174,11 +174,11 @@ def make_home_session(session_ts: int) -> list:
     items_ext = [{"item_id": iid, "position": pos}
                  for pos, iid in enumerate(shown_items, start=1)]
     events.append(make_ev(
-        uid, session_id,
+        uid,
         bhv_id="1001", bhv_page="home", bhv_src="direct",
         bhv_type="show", bhv_value=None,
-        bhv_ext={"req_id": req_id, "items": items_ext},
-        ts=tick(),
+        bhv_ext={"items": items_ext},
+        ts=tick(), req_id=req_id,
     ))
 
     # ── Click funnel for each shown item ─────────────────────────────────────
@@ -186,28 +186,19 @@ def make_home_session(session_ts: int) -> list:
         if random.random() >= HOME_CTR:
             continue
 
-        # Home click
+        # Home click → directly eligible for PDP actions (no separate PDP view event)
         events.append(make_ev(
-            uid, session_id,
+            uid,
             bhv_id="2001", bhv_page="home", bhv_src="direct",
             bhv_type="click", bhv_value=None,
-            bhv_ext={"req_id": req_id, "item_id": item_id, "position": pos},
-            ts=tick(),
+            bhv_ext={"item_id": item_id, "position": pos},
+            ts=tick(), req_id=req_id,
         ))
 
         if random.random() >= PDP_FROM_HOME:
             continue
 
-        # PDP view
-        events.append(make_ev(
-            uid, session_id,
-            bhv_id="2001", bhv_page="pdp", bhv_src="home",
-            bhv_type="click", bhv_value=None,
-            bhv_ext={"item_id": item_id, "req_id": req_id},
-            ts=tick(),
-        ))
-
-        _append_pdp_actions(events, uid, session_id, item_id, req_id, tick)
+        _append_pdp_actions(events, uid, item_id, req_id, tick, bhv_src="home")
 
     return events
 
@@ -223,7 +214,6 @@ def make_search_session(session_ts: int) -> list:
       4. PDP may lead to fav / cart / buy (bhv_id=3001)
     """
     uid        = random.choices(USER_IDS, weights=USER_WEIGHTS, k=1)[0]
-    session_id = f"{uid}_{session_ts}"
     req_id     = new_req_id()
     query      = pick_query()
     ts         = session_ts
@@ -242,11 +232,11 @@ def make_search_session(session_ts: int) -> list:
     items_ext = [{"item_id": iid, "position": pos}
                  for pos, iid in enumerate(shown_items, start=1)]
     events.append(make_ev(
-        uid, session_id,
+        uid,
         bhv_id="1001", bhv_page="search", bhv_src="direct",
         bhv_type="show", bhv_value=None,
-        bhv_ext={"req_id": req_id, "query": query, "items": items_ext},
-        ts=tick(),
+        bhv_ext={"query": query, "items": items_ext},
+        ts=tick(), req_id=req_id,
     ))
 
     # ── Click funnel ──────────────────────────────────────────────────────────
@@ -254,70 +244,60 @@ def make_search_session(session_ts: int) -> list:
         if random.random() >= SEARCH_CTR:
             continue
 
-        # Search click
+        # Search click → directly eligible for PDP actions (no separate PDP view event)
         events.append(make_ev(
-            uid, session_id,
+            uid,
             bhv_id="2001", bhv_page="search", bhv_src="direct",
             bhv_type="click", bhv_value=None,
-            bhv_ext={"req_id": req_id, "query": query, "item_id": item_id, "position": pos},
-            ts=tick(),
+            bhv_ext={"query": query, "item_id": item_id, "position": pos},
+            ts=tick(), req_id=req_id,
         ))
 
         if random.random() >= PDP_FROM_SEARCH:
             continue
 
-        # PDP view
-        events.append(make_ev(
-            uid, session_id,
-            bhv_id="2001", bhv_page="pdp", bhv_src="search",
-            bhv_type="click", bhv_value=None,
-            bhv_ext={"item_id": item_id, "req_id": req_id},
-            ts=tick(),
-        ))
-
-        _append_pdp_actions(events, uid, session_id, item_id, req_id, tick)
+        _append_pdp_actions(events, uid, item_id, req_id, tick, bhv_src="search")
 
     return events
 
 
-def _append_pdp_actions(events: list, uid: str, session_id: str,
-                         item_id: str, req_id: str, tick) -> None:
+def _append_pdp_actions(events: list, uid: str,
+                         item_id: str, req_id: str, tick, bhv_src: str = "home") -> None:
     """Append fav / cart / buy events for a PDP visit."""
-    bhv_src = "home"  # caller may override; set conservatively
 
     if random.random() < CART_RATE:
         events.append(make_ev(
-            uid, session_id,
+            uid,
             bhv_id="3001", bhv_page="pdp", bhv_src=bhv_src,
             bhv_type="click", bhv_value="cart",
-            bhv_ext={"item_id": item_id, "req_id": req_id},
-            ts=tick(),
+            bhv_ext={"item_id": item_id},
+            ts=tick(), req_id=req_id,
         ))
         if random.random() < BUY_FROM_CART:
             events.append(make_ev(
-                uid, session_id,
+                uid,
                 bhv_id="3001", bhv_page="pdp", bhv_src=bhv_src,
                 bhv_type="click", bhv_value="buy",
-                bhv_ext={"item_id": item_id, "req_id": req_id},
-                ts=tick(),
+                bhv_ext={"item_id": item_id},
+                ts=tick(), req_id=req_id,
             ))
 
     if random.random() < FAV_RATE:
         events.append(make_ev(
-            uid, session_id,
+            uid,
             bhv_id="3001", bhv_page="pdp", bhv_src=bhv_src,
             bhv_type="click", bhv_value="fav",
-            bhv_ext={"item_id": item_id, "req_id": req_id},
-            ts=tick(),
+            bhv_ext={"item_id": item_id},
+            ts=tick(), req_id=req_id,
         ))
 
     if random.random() < BUY_FROM_PDP:
         events.append(make_ev(
-            uid, session_id,
+            uid,
             bhv_id="3001", bhv_page="pdp", bhv_src=bhv_src,
             bhv_type="click", bhv_value="buy",
-            bhv_ext={"item_id": item_id, "req_id": req_id},
-            ts=tick(),
+            bhv_ext={"item_id": item_id},
+            ts=tick(), req_id=req_id,
         ))
 
 

@@ -13,6 +13,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  *
  * All events share the public fields below. Page-specific data lives in bhv_ext.
  * Unknown fields are ignored so old and new formats coexist safely.
+ *
+ * Field placement rationale:
+ *   req_id is a top-level field (not inside bhv_ext) because it is a session-level
+ *   identifier shared across all event types. bhv_ext is reserved for page-specific
+ *   parameters only (items list, query, click position).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class UserBehavior {
@@ -26,6 +31,14 @@ public class UserBehavior {
     /** Log ID for deduplication, format log_{uuid-prefix} */
     @JsonProperty("logid")
     public String logId;
+
+    /**
+     * Recommendation / search request ID. Present in all events.
+     * Top-level field — shared across all page types and behavior types.
+     * Used for show-event deduplication when counting page-level PV.
+     */
+    @JsonProperty("req_id")
+    public String reqId;
 
     // ── Event classification ──────────────────────────────────────────────────
 
@@ -78,12 +91,13 @@ public class UserBehavior {
     // ── Extension fields (page-specific payload) ──────────────────────────────
 
     /**
-     * Extension object. Contents vary by page and bhv_type:
-     *   home show  : req_id + items[]
-     *   home click : req_id + item_id + position
-     *   search show : req_id + query + items[]
-     *   search click: req_id + query + item_id + position
-     *   pdp *       : item_id + req_id
+     * Extension object. Contents vary by page and bhv_type.
+     * req_id is NOT included here — it is a top-level field above.
+     *   home  show  : items[]
+     *   home  click : item_id + position
+     *   search show : query + items[]
+     *   search click: query + item_id + position
+     *   pdp   *     : item_id
      */
     @JsonProperty("bhv_ext")
     public BhvExt bhvExt;

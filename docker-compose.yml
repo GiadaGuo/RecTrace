@@ -44,7 +44,7 @@ services:
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.numberOfTaskSlots: 5
     volumes:
       - flink-jars:/opt/flink/usrlib
     depends_on:
@@ -60,7 +60,7 @@ services:
     environment:
       FLINK_PROPERTIES: |
         jobmanager.rpc.address: flink-jobmanager
-        taskmanager.numberOfTaskSlots: 4
+        taskmanager.numberOfTaskSlots: 5
     volumes:
       - flink-jars:/opt/flink/usrlib
     depends_on:

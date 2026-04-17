@@ -25,8 +25,12 @@ public final class KafkaConfig {
     /** Cumulative item-level feature */
     public static final String TOPIC_DWS_ITEM_FEATURE      = "dws_item_feature";
 
+    /** User behavior sequence feature (Job4 output) */
+    public static final String TOPIC_DWS_USER_SEQ_FEATURE  = "dws_user_seq_feature";
+
     // ── Consumer group IDs ───────────────────────────────────────────────────
     public static final String GROUP_JOB1 = "flink-job1-dim-join";
     public static final String GROUP_JOB2 = "flink-job2-window-agg";
     public static final String GROUP_JOB3 = "flink-job3-realtime-feature";
+    public static final String GROUP_JOB4 = "flink-job4-sequence-feature";
 }

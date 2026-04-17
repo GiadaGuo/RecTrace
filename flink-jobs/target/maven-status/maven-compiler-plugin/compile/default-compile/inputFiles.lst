@@ -9,3 +9,4 @@
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job1/DimJoinJob.java
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job2/WindowAggJob.java
 /Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job3/RealtimeFeatureJob.java
+/Users/guoyi/Developer/learn/java/real-time-demo/flink-jobs/src/main/java/com/demo/job4/SequenceFeatureJob.java

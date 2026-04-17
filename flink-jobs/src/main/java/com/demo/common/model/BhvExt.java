@@ -8,24 +8,26 @@ import java.util.List;
 /**
  * Extension fields for behavior events, embedded in bhv_ext of UserBehavior.
  *
+ * req_id has been promoted to a top-level field in UserBehavior and BehaviorWithDim.
+ * It is intentionally removed from this class; all downstream code should use
+ * the top-level reqId field instead.
+ *
  * Field presence depends on bhv_page and bhv_type:
- *   home  show  : req_id + items (list of {item_id, position})
- *   home  click : req_id + item_id + position
- *   search show : req_id + query + items
- *   search click: req_id + query + item_id + position
- *   pdp   *     : item_id + req_id (pass-through from source page)
+ *   home  show  : items (list of {item_id, position})
+ *   home  click : item_id + position
+ *   search show : query + items
+ *   search click: query + item_id + position
+ *   pdp   *     : item_id
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class BhvExt {
-
-    /** Recommendation or search request ID. Present in all events. */
-    @JsonProperty("req_id")
-    public String reqId;
 
     /**
      * Exposure item list for show events.
      * Each entry: {"item_id": "I0000123", "position": 1}
      * Only present when bhv_type=show.
+     * After Job1 expansion, this field is cleared in DWD records — items are
+     * promoted to top-level item_id. Access item data via BehaviorWithDim.itemId.
      */
     @JsonProperty("items")
     public List<ExposureItem> items;
@@ -65,8 +67,8 @@ public class BhvExt {
 
     @Override
     public String toString() {
-        return "BhvExt{reqId='" + reqId + "', query='" + query +
+        return "BhvExt{query='" + query +
                "', itemId='" + itemId + "', position=" + position +
-               "', items=" + items + "}";
+               ", items=" + items + "}";
     }
 }

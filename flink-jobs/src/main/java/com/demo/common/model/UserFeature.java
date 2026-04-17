@@ -23,6 +23,10 @@ public class UserFeature {
     @JsonProperty("total_pv")
     public long totalPv;
 
+    /** Pure click count (bhv_type=click + bhv_value=null, excludes fav/cart/buy) */
+    @JsonProperty("total_click")
+    public long totalClick;
+
     @JsonProperty("total_cart")
     public long totalCart;
 

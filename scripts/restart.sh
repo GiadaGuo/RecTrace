@@ -35,6 +35,25 @@ step() { echo -e "\n${GREEN}[$(date '+%H:%M:%S')] >>> $1${NC}"; }
 warn() { echo -e "${YELLOW}[WARN] $1${NC}"; }
 die()  { echo -e "${RED}[ERROR] $1${NC}"; exit 1; }
 
+# ── 确保 Docker Desktop 已运行 ────────────────────────────────────────────────
+ensure_docker() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+  step "Docker daemon not running, starting Docker Desktop ..."
+  open -a Docker
+  echo -n "  Waiting for Docker"
+  for i in $(seq 1 30); do
+    sleep 3
+    if docker info >/dev/null 2>&1; then
+      echo " ready"
+      return 0
+    fi
+    echo -n "."
+  done
+  die "Docker did not start in time. Please start Docker Desktop manually and retry."
+}
+
 # ── 检查 JAR 是否存在 ──────────────────────────────────────────────────────────
 check_jar() {
   if [ ! -f "$JAR" ]; then
@@ -78,6 +97,9 @@ wait_for_flink() {
 
 # ── 主流程 ────────────────────────────────────────────────────────────────────
 cd "$PROJECT_DIR"
+
+# 0. 确保 Docker 已运行
+ensure_docker
 
 if [ "$JOBS_ONLY" = false ]; then
   # 1. 停止旧环境
@@ -159,6 +181,12 @@ docker exec flink-jobmanager flink run -d \
   -c com.demo.job3.RealtimeFeatureJob \
   /opt/flink/usrlib/flink-jobs-1.0-SNAPSHOT.jar
 echo "  Job3 submitted"
+
+step "Submitting Flink Job4: SequenceFeatureJob ..."
+docker exec flink-jobmanager flink run -d \
+  -c com.demo.job4.SequenceFeatureJob \
+  /opt/flink/usrlib/flink-jobs-1.0-SNAPSHOT.jar
+echo "  Job4 submitted"
 
 # 10. 完成
 echo ""

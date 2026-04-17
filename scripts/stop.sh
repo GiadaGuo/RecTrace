@@ -1,7 +1,8 @@
 #!/bin/bash
 # stop.sh
 # -------
-# 关停所有 Flink Jobs，然后停止 Docker 容器
+# 关停所有 Flink Jobs（Job1-DimJoin / Job2-WindowAgg / Job3-RealtimeFeature / Job4-SequenceFeature），
+# 然后停止 Docker 容器
 #
 # Usage:
 #   bash scripts/stop.sh              # 取消 Jobs + 停止所有容器
