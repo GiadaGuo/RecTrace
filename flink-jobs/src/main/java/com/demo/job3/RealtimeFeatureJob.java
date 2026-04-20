@@ -711,13 +711,24 @@ public class RealtimeFeatureJob {
 
     // ── Cross Feature Function ────────────────────────────────────────────────
     /**
-     * 2f: User × Category and User × Brand cross-feature accumulation.
+     * 2f: User × Category and User × Brand cross-feature with exponential decay.
      *
      * KeyBy: uid — one instance per user.
      *
-     * State design: each counter field is a separate MapState<String, Long> keyed by catId/brand.
-     * This avoids Kryo serialization of long[] arrays (which caused checkpoint failures).
-     * All state types use Flink's native Long serializer.
+     * Decay model:
+     *   Each counter uses Exponential Moving Count (EMC) with a 7-day half-life:
+     *     new_count = old_count * exp(-ln2 * Δt / T_half) + 1
+     *   where Δt is the elapsed time since the last event for this (uid, catId/brand).
+     *
+     *   This ensures:
+     *   - Counters naturally decay toward zero for inactive (uid, entity) pairs
+     *   - Recent interactions carry exponentially more weight than historical ones
+     *   - Interest drift is reflected in real time without explicit windowing
+     *
+     * State design: each counter field is a separate MapState<String, Double> keyed by catId/brand.
+     *   An additional MapState<String, Long> stores the last event timestamp per (uid, entity),
+     *   used to compute Δt for the decay factor.
+     *   Double serialization uses Flink's native DoubleSerializer (no Kryo).
      *
      * Redis key design — no namespace prefix needed:
      *   catId  is String.valueOf(int), producing pure-digit strings "1"~"50".
@@ -730,34 +741,44 @@ public class RealtimeFeatureJob {
      * Redis output (TTL 30d):
      *   cross:{uid}:{category_id} Hash { pv_cnt, click_cnt, cart_cnt, fav_cnt, buy_cnt, last_ts }
      *   cross:{uid}:{brand}       Hash { click_cnt, buy_cnt, last_ts }
+     *   All numeric fields are decayed floating-point values formatted to 4 decimal places.
      */
     static class CrossFeatureFunction extends KeyedProcessFunction<String, BehaviorWithDim, Void> {
 
-        private static final long serialVersionUID = 1L;
-        private static final int  CROSS_TTL = 2_592_000;  // 30 days
+        private static final long   serialVersionUID = 1L;
+        private static final int    CROSS_TTL        = 2_592_000;        // 30 days
+        private static final double HALF_LIFE_MS     = 7.0 * 86_400_000; // 7-day half-life in ms
+        private static final double LN2              = Math.log(2.0);
 
-        // Category cross counters — key = catId (String)
-        private transient MapState<String, Long> catPvState;
-        private transient MapState<String, Long> catClickState;
-        private transient MapState<String, Long> catCartState;
-        private transient MapState<String, Long> catFavState;
-        private transient MapState<String, Long> catBuyState;
+        // Category cross counters — key = catId (String), value = decayed count (Double)
+        private transient MapState<String, Double> catPvState;
+        private transient MapState<String, Double> catClickState;
+        private transient MapState<String, Double> catCartState;
+        private transient MapState<String, Double> catFavState;
+        private transient MapState<String, Double> catBuyState;
+        // Last event timestamp per catId — used to compute decay interval
+        private transient MapState<String, Long>   catLastTsState;
 
-        // Brand cross counters — key = brand (String)
-        private transient MapState<String, Long> brandClickState;
-        private transient MapState<String, Long> brandBuyState;
+        // Brand cross counters — key = brand (String), value = decayed count (Double)
+        private transient MapState<String, Double> brandClickState;
+        private transient MapState<String, Double> brandBuyState;
+        // Last event timestamp per brand
+        private transient MapState<String, Long>   brandLastTsState;
 
         private transient JedisPool jedisPool;
 
         @Override
         public void open(Configuration parameters) {
-            catPvState    = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_pv",    Types.STRING, Types.LONG));
-            catClickState = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_click", Types.STRING, Types.LONG));
-            catCartState  = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_cart",  Types.STRING, Types.LONG));
-            catFavState   = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_fav",   Types.STRING, Types.LONG));
-            catBuyState   = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_buy",   Types.STRING, Types.LONG));
-            brandClickState = getRuntimeContext().getMapState(new MapStateDescriptor<>("xbrand_click", Types.STRING, Types.LONG));
-            brandBuyState   = getRuntimeContext().getMapState(new MapStateDescriptor<>("xbrand_buy",   Types.STRING, Types.LONG));
+            catPvState    = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_pv",    Types.STRING, Types.DOUBLE));
+            catClickState = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_click", Types.STRING, Types.DOUBLE));
+            catCartState  = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_cart",  Types.STRING, Types.DOUBLE));
+            catFavState   = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_fav",   Types.STRING, Types.DOUBLE));
+            catBuyState   = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_buy",   Types.STRING, Types.DOUBLE));
+            catLastTsState = getRuntimeContext().getMapState(new MapStateDescriptor<>("xcat_last_ts", Types.STRING, Types.LONG));
+
+            brandClickState = getRuntimeContext().getMapState(new MapStateDescriptor<>("xbrand_click", Types.STRING, Types.DOUBLE));
+            brandBuyState   = getRuntimeContext().getMapState(new MapStateDescriptor<>("xbrand_buy",   Types.STRING, Types.DOUBLE));
+            brandLastTsState = getRuntimeContext().getMapState(new MapStateDescriptor<>("xbrand_last_ts", Types.STRING, Types.LONG));
 
             JedisPoolConfig cfg = new JedisPoolConfig();
             cfg.setMaxTotal(20);
@@ -783,30 +804,46 @@ public class RealtimeFeatureJob {
             boolean catChanged   = false;
             boolean brandChanged = false;
 
-            // ── Update category cross-counters ────────────────────────────────
+            // ── Update category cross-counters (with decay) ───────────────────
             if ("show".equals(e.bhvType)) {
-                catPvState.put(catId, getL(catPvState, catId) + 1);
+                catPvState.put(catId, decayed(catPvState, catLastTsState, catId, ts) + 1.0);
+                catLastTsState.put(catId, ts);
                 catChanged = true;
             } else if ("click".equals(e.bhvType)) {
                 if (e.bhvValue == null) {
-                    catClickState.put(catId, getL(catClickState, catId) + 1);
+                    catClickState.put(catId, decayed(catClickState, catLastTsState, catId, ts) + 1.0);
+                    catLastTsState.put(catId, ts);
                     catChanged = true;
                 } else {
                     switch (e.bhvValue) {
-                        case "cart": catCartState.put(catId, getL(catCartState, catId) + 1); catChanged = true; break;
-                        case "fav":  catFavState.put(catId,  getL(catFavState,  catId) + 1); catChanged = true; break;
-                        case "buy":  catBuyState.put(catId,  getL(catBuyState,  catId) + 1); catChanged = true; break;
+                        case "cart":
+                            catCartState.put(catId, decayed(catCartState, catLastTsState, catId, ts) + 1.0);
+                            catLastTsState.put(catId, ts);
+                            catChanged = true;
+                            break;
+                        case "fav":
+                            catFavState.put(catId, decayed(catFavState, catLastTsState, catId, ts) + 1.0);
+                            catLastTsState.put(catId, ts);
+                            catChanged = true;
+                            break;
+                        case "buy":
+                            catBuyState.put(catId, decayed(catBuyState, catLastTsState, catId, ts) + 1.0);
+                            catLastTsState.put(catId, ts);
+                            catChanged = true;
+                            break;
                     }
                 }
             }
 
-            // ── Update brand cross-counters (show events excluded) ────────────
+            // ── Update brand cross-counters with decay (show events excluded) ─
             if ("click".equals(e.bhvType)) {
                 if (e.bhvValue == null) {
-                    brandClickState.put(brand, getL(brandClickState, brand) + 1);
+                    brandClickState.put(brand, decayed(brandClickState, brandLastTsState, brand, ts) + 1.0);
+                    brandLastTsState.put(brand, ts);
                     brandChanged = true;
                 } else if ("buy".equals(e.bhvValue)) {
-                    brandBuyState.put(brand, getL(brandBuyState, brand) + 1);
+                    brandBuyState.put(brand, decayed(brandBuyState, brandLastTsState, brand, ts) + 1.0);
+                    brandLastTsState.put(brand, ts);
                     brandChanged = true;
                 }
             }
@@ -819,19 +856,19 @@ public class RealtimeFeatureJob {
 
                 if (catChanged) {
                     String catKey = "cross:" + e.uid + ":" + catId;
-                    pipe.hset(catKey, "pv_cnt",    String.valueOf(getL(catPvState,    catId)));
-                    pipe.hset(catKey, "click_cnt", String.valueOf(getL(catClickState, catId)));
-                    pipe.hset(catKey, "cart_cnt",  String.valueOf(getL(catCartState,  catId)));
-                    pipe.hset(catKey, "fav_cnt",   String.valueOf(getL(catFavState,   catId)));
-                    pipe.hset(catKey, "buy_cnt",   String.valueOf(getL(catBuyState,   catId)));
+                    pipe.hset(catKey, "pv_cnt",    fmt(catPvState,    catId));
+                    pipe.hset(catKey, "click_cnt", fmt(catClickState, catId));
+                    pipe.hset(catKey, "cart_cnt",  fmt(catCartState,  catId));
+                    pipe.hset(catKey, "fav_cnt",   fmt(catFavState,   catId));
+                    pipe.hset(catKey, "buy_cnt",   fmt(catBuyState,   catId));
                     pipe.hset(catKey, "last_ts",   String.valueOf(ts));
                     pipe.expire(catKey, CROSS_TTL);
                 }
 
                 if (brandChanged) {
                     String brandKey = "cross:" + e.uid + ":" + brand;
-                    pipe.hset(brandKey, "click_cnt", String.valueOf(getL(brandClickState, brand)));
-                    pipe.hset(brandKey, "buy_cnt",   String.valueOf(getL(brandBuyState,   brand)));
+                    pipe.hset(brandKey, "click_cnt", fmt(brandClickState, brand));
+                    pipe.hset(brandKey, "buy_cnt",   fmt(brandBuyState,   brand));
                     pipe.hset(brandKey, "last_ts",   String.valueOf(ts));
                     pipe.expire(brandKey, CROSS_TTL);
                 }
@@ -843,9 +880,30 @@ public class RealtimeFeatureJob {
             }
         }
 
-        private long getL(MapState<String, Long> state, String key) throws Exception {
-            Long v = state.get(key);
-            return v == null ? 0L : v;
+        /**
+         * Apply exponential decay to the stored counter for the given key, based on elapsed
+         * time since the last event. Returns the decayed value (before adding the new increment).
+         *
+         * Formula: decayed = stored * exp(-ln2 * Δt / T_half)
+         * where Δt = currentTs - lastTs, T_half = HALF_LIFE_MS (7 days).
+         *
+         * If no prior value exists (first event), returns 0.0.
+         */
+        private double decayed(MapState<String, Double> countState,
+                               MapState<String, Long>   lastTsState,
+                               String key, long currentTs) throws Exception {
+            Double stored = countState.get(key);
+            if (stored == null || stored <= 0) return 0.0;
+            Long lastTs = lastTsState.get(key);
+            if (lastTs == null) return 0.0;
+            double deltaMs = Math.max(0, currentTs - lastTs);
+            return stored * Math.exp(-LN2 * deltaMs / HALF_LIFE_MS);
+        }
+
+        /** Format a decayed Double counter to 4 decimal places for Redis storage. */
+        private String fmt(MapState<String, Double> state, String key) throws Exception {
+            Double v = state.get(key);
+            return v == null ? "0.0000" : String.format("%.4f", v);
         }
     }
 }

@@ -3,8 +3,13 @@ package com.demo.common.model;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
- * Cross feature per (user_id + category_id) within a tumbling window.
- * Output of Job2 -> Kafka topic: dws_user_item_feature
+ * Home-channel cross feature per (user_id + category_id) within a 1-minute tumbling window.
+ * Output of Job2 -> Kafka topic: dws_user_item_feature, Redis feat:user_item:{uid}:{catId}
+ *
+ * Event scope:
+ *   show_count : bhv_page=home, bhv_type=show  (item dim joined by Job1 for home show events)
+ *   click_count: bhv_page=home, bhv_type=click, bhv_value=null
+ *   cart/fav/buy: bhv_page=pdp, bhv_src=home, bhv_type=click, bhv_value=cart/fav/buy
  */
 public class UserItemFeature {
 
@@ -20,8 +25,14 @@ public class UserItemFeature {
     @JsonProperty("window_end")
     public long windowEnd;
 
-    @JsonProperty("pv_count")
-    public long pvCount;
+    // ── Raw counts ────────────────────────────────────────────────────────────
+    /** home show 曝光次数（bhv_page=home, bhv_type=show） */
+    @JsonProperty("show_count")
+    public long showCount;
+
+    /** home click 点击次数（bhv_page=home, bhv_type=click, bhv_value=null） */
+    @JsonProperty("click_count")
+    public long clickCount;
 
     @JsonProperty("cart_count")
     public long cartCount;
@@ -32,16 +43,12 @@ public class UserItemFeature {
     @JsonProperty("buy_count")
     public long buyCount;
 
-    /** buy_count / pv_count, 0 if pvCount == 0 */
-    @JsonProperty("click_to_buy_rate")
-    public double clickToBuyRate;
-
     public UserItemFeature() {}
 
     @Override
     public String toString() {
         return "UserItemFeature{userId='" + userId + "', categoryId=" + categoryId +
-               ", pv=" + pvCount + ", cart=" + cartCount + ", fav=" + favCount +
-               ", buy=" + buyCount + ", ctr=" + String.format("%.4f", clickToBuyRate) + "}";
+               ", show=" + showCount + ", click=" + clickCount +
+               ", cart=" + cartCount + ", fav=" + favCount + ", buy=" + buyCount + "}";
     }
 }

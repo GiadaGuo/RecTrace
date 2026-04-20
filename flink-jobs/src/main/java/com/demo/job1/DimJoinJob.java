@@ -155,8 +155,11 @@ public class DimJoinJob {
                     UserDim userDim = fetchUserDim(jedis, input.uid);
 
                     if ("show".equals(input.bhvType)) {
-                        // ── show event: expand items list, skip item dim join ──────────
-                        return buildShowRecords(input, userDim);
+                        // ── show event: expand items list ─────────────────────────────
+                        // home show events additionally join item dim (brand/price/category)
+                        // so Job2 can compute full CTR/CTB/CVR across the home funnel.
+                        // search show events skip item dim join (search funnel uses separate features).
+                        return buildShowRecords(input, userDim, jedis);
                     } else {
                         // ── click/pdp event: single record, join item dim ─────────────
                         BehaviorWithDim result = buildBase(input);
@@ -197,19 +200,22 @@ public class DimJoinJob {
 
         /**
          * Expand a show event into one record per item in bhv_ext.items.
-         * User dim is applied to all records; item dim fields remain at defaults.
+         * User dim is applied to all records.
          * categoryId is derived from item_id without a Redis lookup.
+         *
+         * Item dim join strategy (brand / price):
+         *   bhv_page=home : joined from Redis dim:item:{itemId} — Job2 needs these fields
+         *                   to compute CTR/CTB/CVR across the full home recommendation funnel.
+         *   bhv_page!=home: skipped — search show events are handled by separate feature flows.
          *
          * After expansion, bhv_ext.items is cleared on each output record.
          * The items list has been promoted to individual top-level item_id fields;
          * keeping the full array in every record would multiply Kafka message size by N.
-         * bhv_ext in each output record retains only the fields relevant to click
-         * events (itemId, position, query) so downstream Jobs remain consistent.
-         * req_id is already a top-level field and is set via buildBase().
          */
-        private static List<BehaviorWithDim> buildShowRecords(UserBehavior input, UserDim userDim) {
+        private static List<BehaviorWithDim> buildShowRecords(UserBehavior input, UserDim userDim, Jedis jedis) {
             BhvExt ext = input.bhvExt;
             List<BhvExt.ExposureItem> items = ext != null ? ext.items : null;
+            boolean joinItemDim = "home".equals(input.bhvPage);
 
             if (items == null || items.isEmpty()) {
                 // Defensive: show event with no items list — emit one record with no itemId
@@ -227,7 +233,10 @@ public class DimJoinJob {
                 r.itemId     = item.itemId;
                 r.categoryId = resolveCategoryId(item.itemId);
                 r.bhvExt     = slimExt;
-                // itemBrand stays null, itemPrice stays 0.0 — not joined for show events
+                if (joinItemDim && item.itemId != null && jedis != null) {
+                    fetchAndApplyItemDim(r, jedis, item.itemId);
+                }
+                // non-home show: itemBrand stays null, itemPrice stays 0.0
                 results.add(r);
             }
             return results;
@@ -324,7 +333,8 @@ public class DimJoinJob {
             UserDim defaultDim = new UserDim(); // all defaults
 
             if ("show".equals(input.bhvType)) {
-                return buildShowRecords(input, defaultDim);
+                // Fallback path: no Redis available, item dim stays at defaults
+                return buildShowRecords(input, defaultDim, null);
             }
 
             BehaviorWithDim f = buildBase(input);
