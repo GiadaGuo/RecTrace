@@ -1,0 +1,247 @@
+
+<h2 class="sr-only">GenRec Playground 前端界面原型，包含四个主要页面的布局预览</h2>
+<style>
+.nav{display:flex;gap:2px;padding:0 0 1rem;border-bottom:0.5px solid var(--color-border-tertiary);margin-bottom:1.5rem}
+.nav-btn{padding:6px 14px;font-size:13px;border-radius:var(--border-radius-md);border:0.5px solid transparent;cursor:pointer;background:transparent;color:var(--color-text-secondary);font-weight:400}
+.nav-btn.active{background:var(--color-background-secondary);border-color:var(--color-border-secondary);color:var(--color-text-primary);font-weight:500}
+.page{display:none}.page.active{display:block}
+.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1.5rem}
+.metric{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:12px 14px}
+.metric-label{font-size:12px;color:var(--color-text-secondary);margin-bottom:4px}
+.metric-val{font-size:22px;font-weight:500;color:var(--color-text-primary)}
+.metric-sub{font-size:11px;color:var(--color-text-tertiary);margin-top:2px}
+.section-label{font-size:12px;font-weight:500;color:var(--color-text-secondary);margin-bottom:8px;letter-spacing:0.03em}
+.card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem;margin-bottom:10px}
+.tag{display:inline-block;padding:2px 8px;border-radius:var(--border-radius-md);font-size:11px;font-weight:500}
+.tag-blue{background:#E6F1FB;color:#0C447C}
+.tag-teal{background:#E1F5EE;color:#085041}
+.tag-amber{background:#FAEEDA;color:#633806}
+.tag-purple{background:#EEEDFE;color:#3C3489}
+.tag-live{background:#E1F5EE;color:#085041;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}
+.bar-wrap{height:6px;background:var(--color-background-secondary);border-radius:3px;margin-top:6px;overflow:hidden}
+.bar{height:100%;border-radius:3px}
+.rank-item{display:flex;align-items:flex-start;gap:12px;padding:10px 0;border-bottom:0.5px solid var(--color-border-tertiary)}
+.rank-item:last-child{border-bottom:none}
+.rank-num{font-size:13px;font-weight:500;color:var(--color-text-tertiary);min-width:20px;margin-top:2px}
+.rank-body{flex:1}
+.rank-title{font-size:14px;font-weight:500;color:var(--color-text-primary)}
+.rank-meta{font-size:12px;color:var(--color-text-secondary);margin-top:2px}
+.rank-score{font-size:13px;font-weight:500;color:#0F6E56;min-width:36px;text-align:right;margin-top:2px}
+.chat-wrap{border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden}
+.chat-body{padding:1rem;background:var(--color-background-secondary);min-height:220px}
+.msg{margin-bottom:12px;max-width:85%}
+.msg-user{margin-left:auto;text-align:right}
+.msg-bubble{display:inline-block;padding:8px 12px;border-radius:var(--border-radius-md);font-size:13px;line-height:1.5}
+.msg-user .msg-bubble{background:var(--color-background-info);color:var(--color-text-info)}
+.msg-ai .msg-bubble{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);color:var(--color-text-primary)}
+.msg-label{font-size:11px;color:var(--color-text-tertiary);margin-bottom:3px}
+.tool-call{font-size:11px;font-family:var(--font-mono);background:var(--color-background-secondary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-md);padding:4px 8px;margin:4px 0;color:var(--color-text-secondary)}
+.chat-input-row{display:flex;gap:8px;padding:10px 1rem;border-top:0.5px solid var(--color-border-tertiary);background:var(--color-background-primary)}
+.chat-input-row input{flex:1;font-size:13px}
+.pipeline-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem}
+.flow-step{padding:10px 12px;border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-tertiary);font-size:13px;position:relative}
+.step-status{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:6px}
+.step-ok{background:#1D9E75}.step-warn{background:#EF9F27}.step-run{background:#378ADD;animation:pulse 1.5s infinite}
+.feat-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.feat-item{font-size:12px;color:var(--color-text-secondary)}
+.feat-val{font-size:13px;font-weight:500;color:var(--color-text-primary);margin-top:1px}
+</style>
+
+<div style="padding:1rem 0">
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.25rem">
+  <div>
+    <span style="font-size:16px;font-weight:500;color:var(--color-text-primary)">GenRec Playground</span>
+    <span class="tag tag-live" style="margin-left:8px">● live</span>
+  </div>
+  <span style="font-size:12px;color:var(--color-text-tertiary)">Flink + LLM Ranking + Agent</span>
+</div>
+
+<nav class="nav">
+  <button class="nav-btn active" onclick="showPage('pipeline',this)">Pipeline monitor</button>
+  <button class="nav-btn" onclick="showPage('playground',this)">Rec playground</button>
+  <button class="nav-btn" onclick="showPage('agent',this)">Agent</button>
+  <button class="nav-btn" onclick="showPage('arch',this)">Architecture</button>
+</nav>
+
+<div id="pipeline" class="page active">
+  <div class="metric-grid">
+    <div class="metric"><div class="metric-label">Events / sec</div><div class="metric-val" id="eps">247</div><div class="metric-sub">Kafka consumer</div></div>
+    <div class="metric"><div class="metric-label">Feature latency</div><div class="metric-val">18<span style="font-size:14px">ms</span></div><div class="metric-sub">Flink → Redis P99</div></div>
+    <div class="metric"><div class="metric-label">Active users</div><div class="metric-val" id="au">1,284</div><div class="metric-sub">session window 5min</div></div>
+    <div class="metric"><div class="metric-label">LLM rank latency</div><div class="metric-val">1.2<span style="font-size:14px">s</span></div><div class="metric-sub">async, first token</div></div>
+  </div>
+
+  <div class="section-label">Pipeline health</div>
+  <div class="pipeline-row">
+    <div class="flow-step"><span class="step-status step-ok"></span><strong>Kafka</strong> — behavior event stream<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">topic: user-events &nbsp;|&nbsp; lag: 0</div></div>
+    <div class="flow-step"><span class="step-status step-run"></span><strong>Flink Job A</strong> — statistical features<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">CTR / CVR windows &nbsp;|&nbsp; throughput: 240/s</div></div>
+    <div class="flow-step"><span class="step-status step-run"></span><strong>Flink Job B</strong> — sequence maintenance<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">behavior seq (len=50) &nbsp;|&nbsp; cross-domain merge</div></div>
+    <div class="flow-step"><span class="step-status step-ok"></span><strong>Redis</strong> — feature KV store<div style="font-size:11px;color:var(--color-text-tertiary);margin-top:4px">hit rate: 98.2% &nbsp;|&nbsp; keys: 41k</div></div>
+  </div>
+
+  <div class="section-label">Event stream (last 5s)</div>
+  <div class="card" style="font-family:var(--font-mono);font-size:11px;color:var(--color-text-secondary);line-height:1.8">
+    <div><span style="color:var(--color-text-tertiary)">13:42:07.221</span>&nbsp; user_3821 &nbsp;<span class="tag tag-teal">click</span>&nbsp; item_0472 &nbsp;[seq_len: 23 → 24]</div>
+    <div><span style="color:var(--color-text-tertiary)">13:42:07.189</span>&nbsp; user_1103 &nbsp;<span class="tag tag-blue">purchase</span>&nbsp; item_1891</div>
+    <div><span style="color:var(--color-text-tertiary)">13:42:06.994</span>&nbsp; user_7740 &nbsp;<span class="tag tag-amber">expose</span>&nbsp; item_0231 &nbsp;[cross-domain: ad_seq]</div>
+    <div><span style="color:var(--color-text-tertiary)">13:42:06.802</span>&nbsp; user_3821 &nbsp;<span class="tag tag-amber">expose</span>&nbsp; item_0391</div>
+  </div>
+</div>
+
+<div id="playground" class="page">
+  <div style="display:grid;grid-template-columns:240px 1fr;gap:1rem">
+    <div>
+      <div class="section-label">User context</div>
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <div style="width:36px;height:36px;border-radius:50%;background:#E1F5EE;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:13px;color:#085041">U3</div>
+          <div><div style="font-size:14px;font-weight:500">user_3821</div><div style="font-size:11px;color:var(--color-text-tertiary)">seq_len: 24</div></div>
+        </div>
+        <div class="feat-grid">
+          <div class="feat-item"><div>CTR (7d)</div><div class="feat-val">6.8%</div></div>
+          <div class="feat-item"><div>CVR (7d)</div><div class="feat-val">2.1%</div></div>
+          <div class="feat-item"><div>Active days</div><div class="feat-val">18</div></div>
+          <div class="feat-item"><div>Avg dwell</div><div class="feat-val">42s</div></div>
+        </div>
+        <div style="margin-top:10px;padding-top:10px;border-top:0.5px solid var(--color-border-tertiary);font-size:11px;color:var(--color-text-tertiary)">
+          Cross-domain: <span class="tag tag-purple" style="font-size:10px">ad_seq ✓</span>
+        </div>
+      </div>
+      <div class="section-label" style="margin-top:12px">Feature snapshot</div>
+      <div class="card" style="font-size:12px">
+        <div style="margin-bottom:6px;color:var(--color-text-secondary)">Recent behavior seq</div>
+        <div style="font-size:11px;font-family:var(--font-mono);color:var(--color-text-tertiary);line-height:1.7">[0472, 1203, 0891,<br>0231, 1891, ...]</div>
+        <div style="margin-top:8px;color:var(--color-text-secondary)">Dominant category</div>
+        <div style="font-size:13px;font-weight:500;margin-top:2px">Electronics · Gaming</div>
+      </div>
+    </div>
+    <div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div class="section-label" style="margin-bottom:0">LLM ranking result</div>
+        <span style="font-size:11px;color:var(--color-text-tertiary)">via Claude claude-sonnet-4-6 · 1.1s</span>
+      </div>
+      <div class="card" style="padding:0.75rem 1rem">
+        <div class="rank-item">
+          <div class="rank-num">1</div>
+          <div class="rank-body">
+            <div class="rank-title">Sony WH-1000XM5 Headphones</div>
+            <div class="rank-meta"><span class="tag tag-teal">seq match ↑</span> <span class="tag tag-blue">cross-domain ↑</span> &nbsp;item_0472</div>
+            <div class="bar-wrap" style="margin-top:6px"><div class="bar" style="width:94%;background:#1D9E75"></div></div>
+          </div>
+          <div class="rank-score">0.94</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num">2</div>
+          <div class="rank-body">
+            <div class="rank-title">Logitech MX Master 3S Mouse</div>
+            <div class="rank-meta"><span class="tag tag-teal">seq match ↑</span> &nbsp;item_1203</div>
+            <div class="bar-wrap" style="margin-top:6px"><div class="bar" style="width:81%;background:#1D9E75"></div></div>
+          </div>
+          <div class="rank-score">0.81</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num">3</div>
+          <div class="rank-body">
+            <div class="rank-title">ASUS ROG Gaming Monitor 27"</div>
+            <div class="rank-meta"><span class="tag tag-amber">struct feat</span> &nbsp;item_0891</div>
+            <div class="bar-wrap" style="margin-top:6px"><div class="bar" style="width:72%;background:#BA7517"></div></div>
+          </div>
+          <div class="rank-score">0.72</div>
+        </div>
+        <div class="rank-item">
+          <div class="rank-num">4</div>
+          <div class="rank-body">
+            <div class="rank-title">Keychron K2 Mechanical Keyboard</div>
+            <div class="rank-meta"><span class="tag tag-amber">struct feat</span> &nbsp;item_0231</div>
+            <div class="bar-wrap" style="margin-top:6px"><div class="bar" style="width:65%;background:#BA7517"></div></div>
+          </div>
+          <div class="rank-score">0.65</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:0;background:var(--color-background-secondary);border-style:dashed">
+        <div style="font-size:12px;color:var(--color-text-secondary);font-weight:500;margin-bottom:4px">LLM ranking rationale</div>
+        <div style="font-size:13px;color:var(--color-text-primary);line-height:1.6">Items 1–2 ranked highest due to strong alignment with user's recent behavior sequence (electronics + audio category). Cross-domain ad signal on item_0472 further boosted confidence. Items 3–4 scored via structural features (category affinity, price range match).</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="agent" class="page">
+  <div class="chat-wrap">
+    <div class="chat-body">
+      <div class="msg msg-user"><div class="msg-label">you</div><div class="msg-bubble">为什么 item_0472 排在第一？</div></div>
+      <div class="msg msg-ai">
+        <div class="msg-label">agent</div>
+        <div class="tool-call">→ get_user_features(user_id="3821")</div>
+        <div class="tool-call">→ explain_ranking(user_id="3821", item_id="0472")</div>
+        <div class="msg-bubble">item_0472（Sony WH-1000XM5）排第一，主要有三个原因：<br><br>① <strong>序列命中强</strong>：该用户最近 24 条行为序列中有 6 次出现耳机/音频品类，item_0472 与序列的余弦相似度为 0.87<br><br>② <strong>跨域广告信号</strong>：该 item 在广告序列中有正向曝光记录，cross-domain score = 0.72<br><br>③ <strong>结构特征匹配</strong>：用户价格区间偏好 ¥1500–3000，item_0472 售价 ¥2499，命中</div>
+      </div>
+      <div class="msg msg-user"><div class="msg-label">you</div><div class="msg-bubble">Flink 里跨域序列是怎么合并的？</div></div>
+      <div class="msg msg-ai">
+        <div class="msg-label">agent</div>
+        <div class="tool-call">→ get_pipeline_status(job="sequence_merge")</div>
+        <div class="msg-bubble">Job B 用 Flink CoProcessFunction 做双流 join：主行为流（behavior-events）和广告曝光流（ad-expose-events）按 user_id 做 keyBy，在 5 分钟 EventTime 窗口内合并。合并后的跨域序列写入 Redis hash，key 格式为 user:{id}:cross_seq，TTL 30min。</div>
+      </div>
+    </div>
+    <div class="chat-input-row">
+      <input type="text" placeholder="问数据链路原理，或解释某个推荐结果…" style="font-size:13px"/>
+      <button onclick="sendPrompt('帮我设计 Agent 的工具函数接口定义')" style="font-size:13px;white-space:nowrap">设计 Agent 工具接口 ↗</button>
+    </div>
+  </div>
+</div>
+
+<div id="arch" class="page">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem">
+    <div class="card">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px">Data flow</div>
+      <div style="font-size:12px;color:var(--color-text-secondary);line-height:2">
+        Mock Generator → <span class="tag tag-teal">Kafka</span><br>
+        Kafka → <span class="tag tag-blue">Flink Job A</span> (stat features)<br>
+        Kafka → <span class="tag tag-blue">Flink Job B</span> (seq + cross-domain)<br>
+        Flink → <span class="tag tag-teal">Redis</span> (KV, TTL 30min)<br>
+        Request → FastAPI → Redis → <span class="tag tag-purple">LLM rank</span> → SSE
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px">Key design decisions</div>
+      <div style="font-size:12px;color:var(--color-text-secondary);line-height:2">
+        LLM 做排序而非召回，避免实时推理延迟过高<br>
+        序列截断 len=50，控制 prompt token 数<br>
+        跨域用 CoProcessFunction 双流 join<br>
+        Agent 工具函数直查 Redis，无额外延迟<br>
+        SQLite 仅存物品元数据，不参与实时链路
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div style="font-size:13px;font-weight:500;margin-bottom:8px">Tech stack</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      <span class="tag tag-blue">Apache Flink 1.18</span>
+      <span class="tag tag-teal">Apache Kafka</span>
+      <span class="tag tag-teal">Redis 7</span>
+      <span class="tag tag-amber">SQLite</span>
+      <span class="tag tag-purple">FastAPI</span>
+      <span class="tag tag-purple">Claude API / OpenAI</span>
+      <span class="tag tag-blue">React + Vite</span>
+      <span class="tag tag-amber">Docker Compose</span>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+function showPage(id, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  btn.classList.add('active');
+}
+let t = 240;
+setInterval(() => {
+  t = t + Math.round((Math.random() - 0.5) * 15);
+  t = Math.max(180, Math.min(320, t));
+  const el = document.getElementById('eps');
+  if(el) el.textContent = t;
+}, 1200);
+</script>
