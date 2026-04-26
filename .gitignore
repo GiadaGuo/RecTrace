@@ -2,3 +2,10 @@ recommend-service/.env
 ARCHITECTURE.md
 TODO.md
 reference/genrec_playground_ui_mockup.html
+flink-jobs/target/
+# Python
+recommend-service/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
