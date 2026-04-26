@@ -12,12 +12,13 @@ Recursion limit prevents infinite loops; on limit breach the last
 assistant message is returned gracefully instead of raising RecursionError.
 """
 
+import json
 import logging
 import re
 from typing import Any, Sequence
 
 import redis
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import MessagesState
 
@@ -30,14 +31,14 @@ logger = logging.getLogger(__name__)
 _RECURSION_LIMIT = 10
 
 # System prompt injected at the start of every conversation
-_SYSTEM_PROMPT = """你是一个推荐系统的智能分析助手。你可以调用以下工具来回答用户关于推荐结果的问题：
-- get_rec_snapshot：查看某次推荐请求的快照数据
-- get_feature_contributions：查看某商品的特征贡献分
-- run_lineage_trace：追溯某商品被推荐的决策路径
-- get_user_sequence：查看用户的点击行为序列
-- get_user_features：查看用户的实时特征
+_SYSTEM_PROMPT = """你是一个推荐系统的智能分析助手。当用户询问用户特征、行为序列、推荐结果或数据链路时，你**必须**调用相应工具获取实时数据，不能凭借自身知识回答：
+- get_user_features：获取用户的实时特征（当问题涉及用户特征、画像时调用）
+- get_user_sequence：获取用户的点击行为序列（当问题涉及用户行为时调用）
+- get_rec_snapshot：查看某次推荐请求的快照数据（需要 req_id）
+- get_feature_contributions：查看某商品的特征贡献分（需要 req_id + item_id）
+- run_lineage_trace：追溯某商品被推荐的完整决策路径
 
-请根据用户的问题选择合适的工具，并用中文给出清晰的回答。"""
+请根据用户问题主动调用工具，并用中文给出完整回答。"""
 
 
 # ── State definition ──────────────────────────────────────────────────────────
@@ -60,10 +61,8 @@ def call_model(state: AgentState) -> dict:
     messages = list(state["messages"])
 
     # Inject system prompt if not already present
-    if not messages or messages[0].type != "system":
-        messages.insert(0, HumanMessage(content=_SYSTEM_PROMPT))
-        # Tag it so we don't re-inject (LangGraph treats it as a HumanMessage
-        # but we store system content there for simplicity with zai-sdk).
+    if not messages or not isinstance(messages[0], SystemMessage):
+        messages.insert(0, SystemMessage(content=_SYSTEM_PROMPT))
 
     # Convert LangChain messages → OpenAI-compatible dicts for zai-sdk
     oai_messages = _lc_messages_to_oai(messages)
@@ -152,6 +151,63 @@ _react_app = _build_graph().compile()
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
+def stream(messages: Sequence[BaseMessage], rc: redis.Redis):
+    """
+    Stream the ReAct loop with intermediate tool-call progress and final answer.
+
+    Yields:
+      - "[TOOL] tool_name(args)" for each tool call step (so the frontend
+        can show the agent is thinking / calling tools)
+      - final assistant text content after all tool calls complete
+      - intermediate AIMessage content (when the model outputs text before
+        deciding to call tools) is skipped to avoid partial / truncated output
+    """
+    seen_ids: set[str] = set()
+
+    for chunk in _react_app.stream(
+        {"messages": list(messages), "rc": rc},
+        config={"recursion_limit": _RECURSION_LIMIT},
+        stream_mode="values",
+    ):
+        last = chunk["messages"][-1]
+
+        # --- Tool-call step: yield progress notification ---
+        if isinstance(last, AIMessage) and last.tool_calls:
+            msg_id = last.id or ""
+            if msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                for tc in last.tool_calls:
+                    tool_name = tc["name"]
+                    args_preview = ", ".join(
+                        f"{k}={v!r}" for k, v in tc["args"].items()
+                    )
+                    yield f"\n> 🔧 调用工具 `{tool_name}({args_preview})`\n"
+
+        # --- Tool-result step: yield formatted tool result ---
+        elif isinstance(last, ToolMessage):
+            msg_id = last.tool_call_id or ""
+            if msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                try:
+                    result_data = json.loads(last.content)
+                    if isinstance(result_data, dict) and result_data:
+                        lines = [f"\n> **工具 `{last.name}` 返回数据：**\n"]
+                        for k, v in result_data.items():
+                            lines.append(f"> - `{k}`: {v}")
+                        yield "\n".join(lines) + "\n\n"
+                    else:
+                        yield f"\n> 工具 `{last.name}` 返回：{last.content}\n\n"
+                except Exception:
+                    yield f"\n> 工具 `{last.name}` 返回：{last.content}\n\n"
+
+        # --- Final answer (AIMessage without tool_calls) ---
+        elif isinstance(last, AIMessage) and last.content and not last.tool_calls:
+            msg_id = last.id or ""
+            if msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                yield last.content
+
+
 def run(messages: Sequence[BaseMessage], rc: redis.Redis) -> str:
     """
     Run the ReAct loop with the given message history and Redis client.
@@ -191,7 +247,9 @@ def _lc_messages_to_oai(messages: Sequence[BaseMessage]) -> list[dict]:
     """Convert LangChain message objects to OpenAI-compatible dicts for zai-sdk."""
     result = []
     for msg in messages:
-        if isinstance(msg, HumanMessage):
+        if isinstance(msg, SystemMessage):
+            result.append({"role": "system", "content": msg.content})
+        elif isinstance(msg, HumanMessage):
             result.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AIMessage):
             entry: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
