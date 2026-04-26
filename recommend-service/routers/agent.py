@@ -10,10 +10,11 @@ from typing import Optional
 
 import redis
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from agent.orchestrator import run as orchestrator_run
+from agent.orchestrator import stream as orchestrator_stream
 from agent.lineage import run_lineage_trace
 from feature.feature_fetcher import _get_redis
 
@@ -50,18 +51,28 @@ class LineageResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.post("/agent/chat", response_model=ChatResponse)
+@router.post("/agent/chat")
 def agent_chat(req: ChatRequest, r: redis.Redis = Depends(get_redis_client)):
     """
-    Agent conversational endpoint.
+    Agent conversational endpoint (SSE).
 
     Accepts a user message, runs it through the LangGraph ReAct loop
-    (which may invoke tool calls), and returns the final assistant answer.
+    (which may invoke tool calls), and streams the assistant reply as
+    Server-Sent Events.  Each event carries a text chunk; the final
+    event is ``data: [DONE]``.
     """
     messages = [HumanMessage(content=req.message)]
-    reply = orchestrator_run(messages, rc=r)
 
-    return ChatResponse(reply=reply, session_id=req.session_id)
+    def event_generator():
+        has_content = False
+        for text in orchestrator_stream(messages, rc=r):
+            has_content = True
+            yield f"data: {text}\n\n"
+        if not has_content:
+            yield "data: 抱歉，未能获取到完整回答，请重试。\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/lineage/{uid}/{item_id}", response_model=LineageResponse)

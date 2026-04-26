@@ -199,3 +199,75 @@ input {
   color: var(--color-text-primary);
   margin-top: 1px;
 }
+
+/* =====================================================
+   Agent 对话
+   ===================================================== */
+.chat-wrap {
+  border: 0.5px solid var(--color-border-tertiary);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+}
+
+.chat-body {
+  padding: 1rem;
+  background: var(--color-background-secondary);
+  min-height: 320px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.msg {
+  margin-bottom: 12px;
+  max-width: 85%;
+}
+
+.msg-user {
+  margin-left: auto;
+  text-align: right;
+}
+
+.msg-bubble {
+  display: inline-block;
+  padding: 8px 12px;
+  border-radius: var(--border-radius-md);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg-user .msg-bubble {
+  background: var(--color-background-info);
+  color: var(--color-text-info);
+}
+
+.msg-ai .msg-bubble {
+  background: var(--color-background-primary);
+  border: 0.5px solid var(--color-border-tertiary);
+  color: var(--color-text-primary);
+}
+
+.msg-label {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 3px;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 1rem;
+  border-top: 0.5px solid var(--color-border-tertiary);
+  background: var(--color-background-primary);
+}
+
+.chat-input-row input {
+  flex: 1;
+  font-size: 13px;
+}
+
+.lineage-card {
+  font-size: 12px;
+  line-height: 1.7;
+}

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import Playground from './pages/Playground'
+import AgentChat from './pages/AgentChat'
 
 type PageKey = 'welcome' | 'pipeline' | 'playground' | 'agent'
 
@@ -41,11 +42,12 @@ export default function App() {
         </div>
       )}
       {page === 'playground' && <Playground />}
-      {(page === 'pipeline' || page === 'agent') && (
+      {page === 'pipeline' && (
         <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13 }}>
           该页面尚未实现
         </div>
       )}
+      {page === 'agent' && <AgentChat />}
     </div>
   )
 }
