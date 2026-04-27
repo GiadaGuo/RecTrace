@@ -67,7 +67,10 @@ def agent_chat(req: ChatRequest, r: redis.Redis = Depends(get_redis_client)):
         has_content = False
         for text in orchestrator_stream(messages, rc=r):
             has_content = True
-            yield f"data: {text}\n\n"
+            # SSE 规范：多行内容需要每行都以 data: 开头
+            for line in text.split("\n"):
+                yield f"data: {line}\n"
+            yield "\n"  # 事件结束空行
         if not has_content:
             yield "data: 抱歉，未能获取到完整回答，请重试。\n\n"
         yield "data: [DONE]\n\n"

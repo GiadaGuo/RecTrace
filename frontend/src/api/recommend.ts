@@ -90,6 +90,7 @@ export async function streamAgentMessage(
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let eventBuffer = '' // 累积单个 SSE 事件的多行数据
 
   while (true) {
     const { done, value } = await reader.read()
@@ -102,11 +103,29 @@ export async function streamAgentMessage(
 
     for (const line of lines) {
       const trimmed = line.trim()
-      if (!trimmed.startsWith('data: ')) continue
-      const payload = trimmed.slice(6) // strip "data: "
-      if (payload === '[DONE]') return
-      onChunk(payload)
+
+      // 空行表示一个 SSE 事件结束
+      if (!trimmed) {
+        if (eventBuffer) {
+          if (eventBuffer === '[DONE]') return
+          onChunk(eventBuffer)
+          eventBuffer = ''
+        }
+        continue
+      }
+
+      // 解析 data: 行
+      if (trimmed.startsWith('data: ')) {
+        const payload = trimmed.slice(6)
+        // 累积多行数据，用换行符连接
+        eventBuffer += (eventBuffer ? '\n' : '') + payload
+      }
     }
+  }
+
+  // 处理剩余的 eventBuffer
+  if (eventBuffer && eventBuffer !== '[DONE]') {
+    onChunk(eventBuffer)
   }
 }
 

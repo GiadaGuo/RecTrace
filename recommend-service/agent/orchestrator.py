@@ -176,12 +176,18 @@ def stream(messages: Sequence[BaseMessage], rc: redis.Redis):
             msg_id = last.id or ""
             if msg_id not in seen_ids:
                 seen_ids.add(msg_id)
+
+                # 先输出开场白
+                if last.content:
+                    yield last.content
+
                 for tc in last.tool_calls:
                     tool_name = tc["name"]
                     args_preview = ", ".join(
                         f"{k}={v!r}" for k, v in tc["args"].items()
                     )
-                    yield f"\n> 🔧 调用工具 `{tool_name}({args_preview})`\n"
+                    # 不以换行符开头，避免 SSE 空行问题
+                    yield f"> 🔧 调用工具 `{tool_name}({args_preview})`\n"
 
         # --- Tool-result step: yield formatted tool result ---
         elif isinstance(last, ToolMessage):
@@ -191,14 +197,14 @@ def stream(messages: Sequence[BaseMessage], rc: redis.Redis):
                 try:
                     result_data = json.loads(last.content)
                     if isinstance(result_data, dict) and result_data:
-                        lines = [f"\n> **工具 `{last.name}` 返回数据：**\n"]
+                        lines = [f"> **工具 `{last.name}` 返回数据：**\n"]
                         for k, v in result_data.items():
                             lines.append(f"> - `{k}`: {v}")
-                        yield "\n".join(lines) + "\n\n"
+                        yield "\n".join(lines) + "\n"
                     else:
-                        yield f"\n> 工具 `{last.name}` 返回：{last.content}\n\n"
+                        yield f"> 工具 `{last.name}` 返回：{last.content}\n"
                 except Exception:
-                    yield f"\n> 工具 `{last.name}` 返回：{last.content}\n\n"
+                    yield f"> 工具 `{last.name}` 返回：{last.content}\n"
 
         # --- Final answer (AIMessage without tool_calls) ---
         elif isinstance(last, AIMessage) and last.content and not last.tool_calls:
