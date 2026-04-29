@@ -233,8 +233,42 @@ input {
   border-radius: var(--border-radius-md);
   font-size: 13px;
   line-height: 1.5;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+
+.msg-bubble p {
+  margin: 0 0 0.4em;
+}
+.msg-bubble p:last-child {
+  margin-bottom: 0;
+}
+.msg-bubble code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--color-background-secondary);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.tool-block {
+  margin: 6px 0;
+  border-left: 3px solid var(--color-border-tertiary);
+  background: var(--color-background-secondary);
+  border-radius: 0 var(--border-radius-md) var(--border-radius-md) 0;
+  font-size: 12px;
+}
+
+.tool-block summary {
+  cursor: pointer;
+  padding: 4px 8px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+.tool-block > div,
+.tool-block > .react-markdown {
+  padding: 4px 8px 8px;
 }
 
 .msg-user .msg-bubble {

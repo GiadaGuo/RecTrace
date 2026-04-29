@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { streamAgentMessage, fetchLineage, type LineageResponse } from '../api/recommend'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -7,6 +8,47 @@ interface ChatMessage {
   id: string
   role: 'user' | 'ai'
   content: string
+}
+
+interface Segment {
+  type: 'tool' | 'text'
+  text: string
+}
+
+/**
+ * Split message content into tool-call progress blocks and normal text.
+ * Tool blocks are consecutive blockquote lines starting with "> 🔧" or "> **工具".
+ */
+function parseSegments(content: string): Segment[] {
+  if (!content) return []
+  const lines = content.split('\n')
+  const segments: Segment[] = []
+  let currentType: 'tool' | 'text' | null = null
+  let currentLines: string[] = []
+
+  const isToolLine = (line: string) =>
+    line.startsWith('> 🔧') || line.startsWith('> **工具')
+
+  const flush = () => {
+    if (currentType && currentLines.length > 0) {
+      segments.push({ type: currentType, text: currentLines.join('\n') })
+    }
+    currentLines = []
+  }
+
+  for (const line of lines) {
+    const toolLine = isToolLine(line)
+    const lineType: 'tool' | 'text' = toolLine ? 'tool' : 'text'
+
+    if (currentType !== lineType) {
+      flush()
+      currentType = lineType
+    }
+    currentLines.push(line)
+  }
+  flush()
+
+  return segments
 }
 
 // ── Quick question presets ──────────────────────────────────────────────────────
@@ -112,7 +154,13 @@ export default function AgentChat() {
             <div key={msg.id} className={`msg ${msg.role === 'user' ? 'msg-user' : 'msg-ai'}`}>
               <div className="msg-label">{msg.role === 'user' ? 'you' : 'agent'}</div>
               <div className="msg-bubble">
-                {msg.content || (loading && msg.role === 'ai' ? '...' : '')}
+                {msg.role === 'user' ? (msg.content) : !msg.content && loading ? '...' : parseSegments(msg.content).map((seg, i) =>
+                  seg.type === 'tool'
+                    ? <details key={i} className="tool-block" open><summary>工具调用</summary>
+                        <ReactMarkdown>{seg.text}</ReactMarkdown>
+                      </details>
+                    : <ReactMarkdown key={i}>{seg.text}</ReactMarkdown>
+                )}
               </div>
             </div>
           ))}

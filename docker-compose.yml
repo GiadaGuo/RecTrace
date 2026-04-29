@@ -66,5 +66,27 @@ services:
     depends_on:
       - flink-jobmanager
 
+  recommend-service:
+    build: ./recommend-service
+    container_name: recommend-service
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./recommend-service/.env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    container_name: frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - recommend-service
+
 volumes:
   flink-jars:

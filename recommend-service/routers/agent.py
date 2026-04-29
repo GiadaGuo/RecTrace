@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from agent.orchestrator import stream as orchestrator_stream
 from agent.lineage import run_lineage_trace
+from agent.prompts import NO_CONTENT_MSG
 from feature.feature_fetcher import _get_redis
 
 router = APIRouter()
@@ -72,7 +73,7 @@ def agent_chat(req: ChatRequest, r: redis.Redis = Depends(get_redis_client)):
                 yield f"data: {line}\n"
             yield "\n"  # 事件结束空行
         if not has_content:
-            yield "data: 抱歉，未能获取到完整回答，请重试。\n\n"
+            yield f"data: {NO_CONTENT_MSG}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
