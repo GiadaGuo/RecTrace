@@ -1,0 +1,43 @@
+name: rs_project
+channels:
+  - conda-forge
+  - defaults
+  - nvidia
+dependencies:
+  - python=3.12
+  - pip
+  # Deep Learning
+  - pytorch
+  - pytorch-cuda=12.1
+  - faiss-gpu
+  # Database
+  - aiomysql
+  - pymysql
+  - sqlalchemy
+  # Web Framework
+  - fastapi
+  - uvicorn
+  - starlette
+  # Data Processing
+  - numpy
+  - pandas
+  - scipy
+  - scikit-learn
+  # CLI & Utils
+  - click
+  - pydantic
+  - typing_extensions
+  - pip:
+      # Deep Learning Extensions
+      - clip @ git+https://github.com/openai/CLIP.git
+      - faiss-cpu
+      # Image Processing
+      - pillow
+      - requests
+      # NLP & Transformers
+      - transformers
+      - sentence-transformers
+      - tokenizers
+      - huggingface-hub
+      - safetensors
+      - timm

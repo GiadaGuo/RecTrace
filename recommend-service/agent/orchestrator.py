@@ -1,20 +1,26 @@
 """
 orchestrator.py
 ---------------
-LangGraph StateGraph that wires together the LLM (zhipu_client) and
-the tool functions (tools.py) into a ReAct loop.
+LangGraph StateGraph that wires together the LLM (zhipu_client), the tool
+registry, iteration budget, and memory context into a ReAct loop.
 
 Graph topology:
   START → agent (call_model) ─┬─ tool_calls non-empty → tools ─→ agent
                               └─ tool_calls empty      → END
 
-Recursion limit prevents infinite loops; on limit breach the last
-assistant message is returned gracefully instead of raising RecursionError.
+Changes from original:
+  - Uses IterationBudget (env AGENT_MAX_ITERATIONS, default 30) instead of
+    hardcoded recursion_limit=10.
+  - AgentState carries user_id + session_id for tool context isolation.
+  - Memory context block injected after SystemMessage at conversation start.
+  - All tool dispatches pass user_id + session_id through registry.dispatch().
+  - ``stream()`` and ``run()`` accept keyword args user_id / session_id.
 """
+
+from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any, Sequence
 
 import redis
@@ -22,6 +28,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import MessagesState
 
+from .iteration_budget import IterationBudget
 from .prompts import (
     LLM_ERROR_TEMPLATE,
     RECURSION_LIMIT_MSG,
@@ -31,23 +38,54 @@ from .prompts import (
     TOOL_RESULT_HEADER_TEMPLATE,
     TOOL_RESULT_ITEM_TEMPLATE,
 )
-from .tools import TOOL_SPECS, dispatch_tool
+from .tool_registry import registry
+# Side-effect imports: registers all tool + todo handlers onto registry at startup
+from . import tools as _tools_module  # noqa: F401
+from . import todo_tool as _todo_module  # noqa: F401
 from .zhipu_client import invoke as llm_invoke, parse_tool_call
 
 logger = logging.getLogger(__name__)
-
-# Maximum ReAct iterations before forced stop
-_RECURSION_LIMIT = 10
-
-# (SYSTEM_PROMPT moved to agent/prompts.py)
 
 
 # ── State definition ──────────────────────────────────────────────────────────
 
 
 class AgentState(MessagesState):
-    """Extends MessagesState with a redis client reference for tool dispatch."""
+    """
+    Extends MessagesState with runtime context for tool dispatch.
+
+    rc         — Redis client
+    user_id    — caller identity (Phase 1: always "default")
+    session_id — conversation session UUID
+    budget     — shared IterationBudget instance for this request
+    """
     rc: redis.Redis
+    user_id: str
+    session_id: str
+    budget: IterationBudget
+
+
+# ── Memory context helper ─────────────────────────────────────────────────────
+
+
+def _build_memory_block(user_id: str, session_id: str) -> str | None:
+    """
+    Try to load short-term memory context for the current session.
+    Returns a formatted string to inject as the second message, or None.
+
+    Importing MemoryManager here (lazy) avoids a circular import at module
+    init time and makes the memory system optional during early development.
+    """
+    try:
+        from .memory.manager import MemoryManager
+        mm = MemoryManager(user_id=user_id, session_id=session_id)
+        context = mm.get_context()
+        return context if context else None
+    except ImportError:
+        return None
+    except Exception as e:
+        logger.debug("[orchestrator] memory context unavailable: %s", e)
+        return None
 
 
 # ── Node functions ────────────────────────────────────────────────────────────
@@ -55,26 +93,44 @@ class AgentState(MessagesState):
 
 def call_model(state: AgentState) -> dict:
     """
-    Call the LLM with the current message history and TOOL_SPECS.
-    Returns the LLM's response as an AIMessage (or dict that LangGraph
-    will merge into state).
+    Consume one iteration budget unit, then call the LLM.
+    If the budget is exhausted, immediately return a forced-finish message.
     """
-    messages = list(state["messages"])
+    budget: IterationBudget = state.get("budget") or IterationBudget()
 
-    # Inject system prompt if not already present
+    if not budget.consume():
+        logger.warning("[orchestrator] IterationBudget exhausted (user=%s session=%s)",
+                       state.get("user_id"), state.get("session_id"))
+        return {"messages": [AIMessage(content=RECURSION_LIMIT_MSG)]}
+
+    messages = list(state["messages"])
+    user_id = state.get("user_id", "default")
+    session_id = state.get("session_id", "default")
+
+    # Inject system prompt (first position)
     if not messages or not isinstance(messages[0], SystemMessage):
         messages.insert(0, SystemMessage(content=SYSTEM_PROMPT))
 
-    # Convert LangChain messages → OpenAI-compatible dicts for zai-sdk
+    # Inject memory context block right after system prompt (once, at start)
+    if len(messages) <= 2:
+        mem_block = _build_memory_block(user_id, session_id)
+        if mem_block:
+            # Insert as an assistant message so it looks like prior knowledge
+            messages.insert(1, AIMessage(content=mem_block))
+
+    # Convert to OpenAI-compatible dicts for zai-sdk
     oai_messages = _lc_messages_to_oai(messages)
 
+    # Build tool definitions (all toolsets)
+    tool_defs = registry.get_definitions()
+
     try:
-        ai_msg = llm_invoke(oai_messages, tools=TOOL_SPECS)
+        ai_msg = llm_invoke(oai_messages, tools=tool_defs)
     except Exception as e:
         logger.warning("[orchestrator] LLM invoke failed: %s", e)
         return {"messages": [AIMessage(content=LLM_ERROR_TEMPLATE.format(e=e))]}
 
-    # Wrap into LangChain AIMessage, preserving tool_calls
+    # Build LangChain AIMessage with normalized tool_calls
     tool_calls_data = []
     if ai_msg.tool_calls:
         for tc in ai_msg.tool_calls:
@@ -89,18 +145,17 @@ def call_model(state: AgentState) -> dict:
         content=ai_msg.content or "",
         tool_calls=tool_calls_data,
     )
-    # Store the raw zai-sdk message for should_continue to inspect
     lc_ai.additional_kwargs["_raw_tool_calls"] = ai_msg.tool_calls
-
     return {"messages": [lc_ai]}
 
 
 def tool_node(state: AgentState) -> dict:
-    """
-    Execute all tool_calls from the last AIMessage and return ToolMessages.
-    """
+    """Execute all tool_calls from the last AIMessage and return ToolMessages."""
     last_ai: AIMessage = state["messages"][-1]
     rc: redis.Redis = state.get("rc")
+    user_id: str = state.get("user_id", "default")
+    session_id: str = state.get("session_id", "default")
+    budget: IterationBudget | None = state.get("budget")
 
     tool_messages: list[ToolMessage] = []
     for tc in last_ai.tool_calls:
@@ -108,8 +163,15 @@ def tool_node(state: AgentState) -> dict:
         tool_args = tc["args"]
         tool_id = tc["id"]
 
-        logger.debug("[orchestrator] executing tool: %s(%s)", tool_name, tool_args)
-        result_str = dispatch_tool(tool_name, tool_args, rc=rc)
+        logger.debug("[orchestrator] executing tool: %s(%s) user=%s", tool_name, tool_args, user_id)
+        result_str = registry.dispatch(
+            tool_name, tool_args,
+            rc=rc, user_id=user_id, session_id=session_id,
+        )
+
+        # execute_code gets a free budget refund (not yet implemented, reserved)
+        if tool_name == "execute_code" and budget is not None:
+            budget.refund(1)
 
         tool_messages.append(
             ToolMessage(content=result_str, tool_call_id=tool_id, name=tool_name)
@@ -122,10 +184,6 @@ def tool_node(state: AgentState) -> dict:
 
 
 def should_continue(state: AgentState) -> str:
-    """
-    Route: if the last AIMessage has tool_calls, go to 'tools' node;
-    otherwise, end the conversation.
-    """
     last_msg = state["messages"][-1]
     if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
         return "tools"
@@ -152,45 +210,53 @@ _react_app = _build_graph().compile()
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def stream(messages: Sequence[BaseMessage], rc: redis.Redis):
+def stream(
+    messages: Sequence[BaseMessage],
+    rc: redis.Redis,
+    *,
+    user_id: str = "default",
+    session_id: str = "default",
+):
     """
     Stream the ReAct loop with intermediate tool-call progress and final answer.
 
-    Yields:
-      - "[TOOL] tool_name(args)" for each tool call step (so the frontend
-        can show the agent is thinking / calling tools)
-      - final assistant text content after all tool calls complete
-      - intermediate AIMessage content (when the model outputs text before
-        deciding to call tools) is skipped to avoid partial / truncated output
+    Yields str chunks:
+      - "[TOOL] tool_name(args)"  — for each tool call step
+      - final assistant text after all tool calls complete
     """
+    budget = IterationBudget()
     seen_ids: set[str] = set()
 
     for chunk in _react_app.stream(
-        {"messages": list(messages), "rc": rc},
-        config={"recursion_limit": _RECURSION_LIMIT},
+        {
+            "messages": list(messages),
+            "rc": rc,
+            "user_id": user_id,
+            "session_id": session_id,
+            "budget": budget,
+        },
+        # LangGraph recursion limit kept as hard safety net above budget limit
+        config={"recursion_limit": budget._max + 5},
         stream_mode="values",
     ):
         last = chunk["messages"][-1]
 
-        # --- Tool-call step: yield progress notification ---
+        # Tool-call step: yield progress notification
         if isinstance(last, AIMessage) and last.tool_calls:
             msg_id = last.id or ""
             if msg_id not in seen_ids:
                 seen_ids.add(msg_id)
-
-                # 先输出开场白
                 if last.content:
                     yield last.content
-
                 for tc in last.tool_calls:
-                    tool_name = tc["name"]
                     args_preview = ", ".join(
                         f"{k}={v!r}" for k, v in tc["args"].items()
                     )
-                    # 不以换行符开头，避免 SSE 空行问题
-                    yield TOOL_CALL_PROGRESS_TEMPLATE.format(tool_name=tool_name, args_preview=args_preview)
+                    yield TOOL_CALL_PROGRESS_TEMPLATE.format(
+                        tool_name=tc["name"], args_preview=args_preview
+                    )
 
-        # --- Tool-result step: yield formatted tool result ---
+        # Tool-result step: yield formatted result
         elif isinstance(last, ToolMessage):
             msg_id = last.tool_call_id or ""
             if msg_id not in seen_ids:
@@ -203,11 +269,15 @@ def stream(messages: Sequence[BaseMessage], rc: redis.Redis):
                             lines.append(TOOL_RESULT_ITEM_TEMPLATE.format(k=k, v=v))
                         yield "\n".join(lines) + "\n"
                     else:
-                        yield TOOL_RESULT_FALLBACK_TEMPLATE.format(name=last.name, content=last.content)
+                        yield TOOL_RESULT_FALLBACK_TEMPLATE.format(
+                            name=last.name, content=last.content
+                        )
                 except Exception:
-                    yield TOOL_RESULT_FALLBACK_TEMPLATE.format(name=last.name, content=last.content)
+                    yield TOOL_RESULT_FALLBACK_TEMPLATE.format(
+                        name=last.name, content=last.content
+                    )
 
-        # --- Final answer (AIMessage without tool_calls) ---
+        # Final answer
         elif isinstance(last, AIMessage) and last.content and not last.tool_calls:
             msg_id = last.id or ""
             if msg_id not in seen_ids:
@@ -215,24 +285,32 @@ def stream(messages: Sequence[BaseMessage], rc: redis.Redis):
                 yield last.content
 
 
-def run(messages: Sequence[BaseMessage], rc: redis.Redis) -> str:
+def run(
+    messages: Sequence[BaseMessage],
+    rc: redis.Redis,
+    *,
+    user_id: str = "default",
+    session_id: str = "default",
+) -> str:
     """
-    Run the ReAct loop with the given message history and Redis client.
-
-    Returns the final assistant text answer.
-    On recursion-limit breach, returns the last available assistant message.
+    Run the full ReAct loop synchronously and return the final answer string.
     """
+    budget = IterationBudget()
     try:
         result = _react_app.invoke(
-            {"messages": list(messages), "rc": rc},
-            config={"recursion_limit": _RECURSION_LIMIT},
+            {
+                "messages": list(messages),
+                "rc": rc,
+                "user_id": user_id,
+                "session_id": session_id,
+                "budget": budget,
+            },
+            config={"recursion_limit": budget._max + 5},
         )
     except Exception as e:
-        # LangGraph may raise GraphRecursionError on limit breach
         err_msg = str(e)
         if "recursion" in err_msg.lower():
             logger.warning("[orchestrator] Recursion limit reached, returning last message")
-            # Extract last assistant content from messages so far
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage) and msg.content:
                     return msg.content
@@ -240,7 +318,6 @@ def run(messages: Sequence[BaseMessage], rc: redis.Redis) -> str:
         raise
 
     final_messages = result.get("messages", [])
-    # Find the last AIMessage with non-empty content
     for msg in reversed(final_messages):
         if isinstance(msg, AIMessage) and msg.content:
             return msg.content
@@ -251,7 +328,7 @@ def run(messages: Sequence[BaseMessage], rc: redis.Redis) -> str:
 
 
 def _lc_messages_to_oai(messages: Sequence[BaseMessage]) -> list[dict]:
-    """Convert LangChain message objects to OpenAI-compatible dicts for zai-sdk."""
+    """Convert LangChain message objects to OpenAI-compatible dicts."""
     result = []
     for msg in messages:
         if isinstance(msg, SystemMessage):
@@ -267,9 +344,7 @@ def _lc_messages_to_oai(messages: Sequence[BaseMessage]) -> list[dict]:
                         "type": "function",
                         "function": {
                             "name": tc["name"],
-                            "arguments": __import__("json").dumps(
-                                tc["args"], ensure_ascii=False
-                            ),
+                            "arguments": json.dumps(tc["args"], ensure_ascii=False),
                         },
                     }
                     for tc in msg.tool_calls
@@ -282,6 +357,5 @@ def _lc_messages_to_oai(messages: Sequence[BaseMessage]) -> list[dict]:
                 "content": msg.content,
             })
         else:
-            # Fallback: treat as user message
             result.append({"role": "user", "content": str(msg.content)})
     return result

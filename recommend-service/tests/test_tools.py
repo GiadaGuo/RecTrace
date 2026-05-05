@@ -78,10 +78,11 @@ class TestGetFeatureContributions:
         assert result["item_id"] == "I0000001"
         assert "conversion_rate" in result["feature_contributions"]
 
-    def test_item_not_in_snapshot_returns_empty(self, fake_redis):
+    def test_item_not_in_snapshot_returns_empty_contributions(self, fake_redis):
         _seed_snapshot(fake_redis)
         result = get_feature_contributions("req_test01", "I9999999", rc=fake_redis)
-        assert result == {}
+        assert result["item_id"] == "I9999999"
+        assert result["feature_contributions"] == {}
 
     def test_snapshot_not_exists_returns_empty(self, fake_redis):
         result = get_feature_contributions("req_nonexistent", "I0000001", rc=fake_redis)

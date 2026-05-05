@@ -66,18 +66,37 @@ services:
     depends_on:
       - flink-jobmanager
 
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chromadb
+    ports:
+      - "8200:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   recommend-service:
     build: ./recommend-service
     container_name: recommend-service
     ports:
-      - "8000:8000"
+      - "8100:8000"
     env_file:
       - ./recommend-service/.env
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - FLINK_JOBMANAGER_HOST=flink-jobmanager
+      - FLINK_JOBMANAGER_PORT=8081
     depends_on:
       redis:
+        condition: service_healthy
+      chromadb:
         condition: service_healthy
 
   frontend:
@@ -90,3 +109,4 @@ services:
 
 volumes:
   flink-jars:
+  chroma-data:
