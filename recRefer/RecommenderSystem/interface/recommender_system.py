@@ -1,21 +1,14 @@
 import os
-import pickle
+import shelve
 os.environ["OMP_NUM_THREADS"] = "1"
 import pandas as pd
 from entities import *
 
-_CACHE_PATH = os.path.join(os.path.dirname(__file__), "../cache/content_features.pkl")
+_CACHE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "../cache/content_features"))
 
-def _load_feature_cache() -> dict:
-    if os.path.exists(_CACHE_PATH):
-        with open(_CACHE_PATH, "rb") as f:
-            return pickle.load(f)
-    return {}
-
-def _save_feature_cache(cache: dict):
+def _open_feature_cache():
     os.makedirs(os.path.dirname(_CACHE_PATH), exist_ok=True)
-    with open(_CACHE_PATH, "wb") as f:
-        pickle.dump(cache, f)
+    return shelve.open(_CACHE_PATH)
 from recall import RecallRecommender
 from rough_ranking import RoughRankingRecommender
 from fine_ranking import FineRankingRecommender
@@ -49,7 +42,7 @@ class RecommenderSystem:
         self.df_items = df_items
         self.df_items['item_keywords'] = self.df_items['item_keywords'].apply(lambda x: tuple(x.split(';')))
         print("开始构建物品索引...")
-        feature_cache = _load_feature_cache()
+        feature_cache = _open_feature_cache()
         cache_updated = False
         clip_model, preprocess = None, None
         for row in self.df_items.itertuples(index=True):  # index=True 获取原始的 DataFrame 索引
@@ -80,7 +73,7 @@ class RecommenderSystem:
             # 填充字典和列表
             self.id_item_dict[item.item_id] = item
             self.item_idx2id[item_idx] = item.item_id
-            # 计算特征（优先从缓存读取）
+            # 计算特征（优先从缓存读取，shelve按key追加写，不全量重写）
             if row.item_id in feature_cache:
                 item.content_feature = feature_cache[row.item_id]
             else:
@@ -89,9 +82,10 @@ class RecommenderSystem:
                 item.calculate_content_feature(clip_model, preprocess)
                 feature_cache[row.item_id] = item.content_feature
                 cache_updated = True
+                print(f"已缓存物品特征: {row.item_id} ({item_idx + 1}/{len(self.df_items)})")
             self.items.append(item)
+        feature_cache.close()
         if cache_updated:
-            _save_feature_cache(feature_cache)
             print("物品索引构建完成，新特征已写入缓存")
         else:
             print("物品索引构建完成（全部命中缓存）")

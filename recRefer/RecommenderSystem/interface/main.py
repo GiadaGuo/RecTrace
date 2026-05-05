@@ -63,15 +63,15 @@ app = FastAPI(
 
 # ===== 交互类 =====
 class RecommendationRequest(BaseModel):
-    user_id: int
+    user_id: str
     hour: int
     is_weekend: bool
     is_holiday: bool
 
 class RecommendationResponse(BaseModel):
     status: str
-    user_id: int
-    recommendations: List[int]
+    user_id: str
+    recommendations: List[str]
     request_id: str
 
 class FineTuningRequest(BaseModel):
@@ -152,7 +152,6 @@ async def models_fine_tuning(start_time,end_time)->bool:
 # =========== 接口路由 ===========
 # 推荐接口
 @app.post("/recommend",
-              response_model=RecommendationResponse,
           responses={400: {"model": Response}, 404: {"model": Response},500: {"model": Response}},
           summary="Get Recommendations for a User")
 async def recommend(request: RecommendationRequest):
@@ -161,7 +160,7 @@ async def recommend(request: RecommendationRequest):
     is_weekend = request.is_weekend
     is_holiday = request.is_holiday
 
-    if not (user_id and hour and is_weekend and is_holiday):
+    if not (user_id and hour is not None):
         logging.error("recommend failed : Missing request parameters ")
         return Response(
             status = "error",
