@@ -272,7 +272,7 @@ export default function Playground() {
   const avatarLetter = currentUid ? currentUid.replace(/\D/g, '').slice(-2) || currentUid[0] : '?'
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: '1.5rem' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: '2.5rem' }}>
       {/* -------- 左列：用户上下文 -------- */}
       <div>
         {/* uid 输入 */}

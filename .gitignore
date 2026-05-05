@@ -9,3 +9,6 @@ recommend-service/__pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+agentRefer/
+recRefer/RecommenderSystem/cache
+modelRefer/
